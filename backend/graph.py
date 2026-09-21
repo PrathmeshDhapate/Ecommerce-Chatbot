@@ -1,4 +1,5 @@
 from typing import TypedDict
+from rag import retrieve_faq
 
 from langgraph.graph import StateGraph, START, END
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -21,21 +22,15 @@ def chatbot_node(state: State):
 
     context = retrieve_faq(state["message"])
 
-    response = llm.invoke(
-        f"""
-Answer the user's question using the FAQ context below.
-
-FAQ context:
-{context}
-
-User question:
-{state["message"]}
-"""
-    )
+    if not context:
+        return {
+            "context": "",
+            "response": "I couldn't find relevant information in our FAQ."
+        }
 
     return {
         "context": context,
-        "response": response.content[0]["text"]
+        "response": context
     }
 
 

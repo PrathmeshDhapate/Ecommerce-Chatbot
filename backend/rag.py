@@ -1,12 +1,9 @@
 import json
 from pathlib import Path
 
-from langchain_google_genai import (
-    GoogleGenerativeAIEmbeddings,
-    ChatGoogleGenerativeAI,
-)
-from langchain_chroma import Chroma
 from dotenv import load_dotenv
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_chroma import Chroma
 
 load_dotenv()
 
@@ -29,23 +26,9 @@ embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-001"
 )
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3.8-flash"
-)
-
 
 # -------------------------
-# 3. Prepare FAQ documents
-# -------------------------
-
-documents = [
-    f"Question: {faq['question']}\nAnswer: {faq['answer']}"
-    for faq in faqs
-]
-
-
-# -------------------------
-# 4. Create Chroma vector store
+# 3. Create Chroma vector store
 # -------------------------
 
 vector_store = Chroma(
@@ -56,66 +39,68 @@ vector_store = Chroma(
 
 
 # -------------------------
-# 5. Store FAQs
+# 4. Store FAQs
 # -------------------------
 
-ids = [f"faq-{i}" for i in range(len(documents))]
+ids = [f"faq-{i}" for i in range(len(faqs))]
 
 existing = vector_store.get()["ids"]
 
 new_documents = []
+new_metadatas = []
 new_ids = []
 
-for document, faq_id in zip(documents, ids):
+for faq, faq_id in zip(faqs, ids):
+
     if faq_id not in existing:
-        new_documents.append(document)
+
+        new_documents.append(faq["question"])
+
+        new_metadatas.append({
+            "answer": faq["answer"]
+        })
+
         new_ids.append(faq_id)
+
 
 if new_documents:
     vector_store.add_texts(
         texts=new_documents,
+        metadatas=new_metadatas,
         ids=new_ids
     )
 
 
 # -------------------------
-# 6. Retrieval function
+# 5. Retrieve FAQ
 # -------------------------
 
 def retrieve_faq(question: str):
 
-    results = vector_store.similarity_search(
+    results = vector_store.similarity_search_with_score(
         question,
         k=1
     )
 
-    return results[0].page_content
+    if not results:
+        return ""
 
-def generate_answer(question: str, context: str):
+    document, score = results[0]
 
-    prompt = f"""
-Answer the user's question using only the information provided in the FAQ context.
+    if score > 0.6:
+        return ""
 
-FAQ context:
-{context}
-
-User question:
-{question}
-"""
-
-    response = llm.invoke(prompt)
-
-    return response.content[0]["text"]
+    return document.metadata["answer"]
 
 
 # -------------------------
-# 7. Test retrieval
+# 6. Test
 # -------------------------
 
-question = "Can I return something?"
+if __name__ == "__main__":
 
-faq = retrieve_faq(question)
+    question = "Can I return something?"
 
-answer = generate_answer(question, faq)
+    answer = retrieve_faq(question)
 
-print(answer)
+    print(answer)
