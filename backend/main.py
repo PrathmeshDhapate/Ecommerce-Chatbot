@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from langchain_google_genai import GoogleGenerativeAI
+
 
 from graph import graph
 
-
 app = FastAPI()
+
 
 
 class ChatRequest(BaseModel):
@@ -18,10 +18,11 @@ def home():
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+async def chat(request: ChatRequest):
 
-    result = graph.invoke({
+    result = await graph.ainvoke({
         "message": request.message,
+        "route": "",
         "response": ""
     })
 
