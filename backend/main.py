@@ -19,6 +19,7 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
+    thread_id: str
 
 
 @app.get("/")
@@ -29,11 +30,18 @@ def home():
 @app.post("/chat")
 async def chat(request: ChatRequest):
 
-    result = await graph.ainvoke({
+    result = await graph.ainvoke(
+    {
         "message": request.message,
         "route": "",
         "response": ""
-    })
+    },
+    config={
+        "configurable": {
+            "thread_id": request.thread_id
+        }
+    }
+)
 
     return {
         "answer": result["response"]

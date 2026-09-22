@@ -1,25 +1,28 @@
 from typing import TypedDict
+from typing_extensions import Annotated
+import operator
 
+from langchain_core.messages import BaseMessage, HumanMessage,AIMessage
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain.agents import create_agent
-from rag import retrieve_faq
+
 
 from dotenv import load_dotenv
+from rag import retrieve_faq
 
 load_dotenv()
 
 
-# -------------------------
-# 1. State
-# -------------------------
-
 class State(TypedDict):
+    messages: Annotated[list[BaseMessage], operator.add]
     message: str
     route: str
     response: str
+
 
 def extract_text(content):
 
@@ -27,7 +30,6 @@ def extract_text(content):
         return content
 
     if isinstance(content, list):
-
         return "".join(
             item.get("text", "")
             for item in content
@@ -36,11 +38,8 @@ def extract_text(content):
 
     return str(content)
 
-# -------------------------
-# 2. MCP Agent
-# -------------------------
 
-async def ask_mcp_agent(question: str):
+async def ask_mcp_agent(messages):
 
     client = MultiServerMCPClient(
         {
@@ -54,7 +53,7 @@ async def ask_mcp_agent(question: str):
     tools = await client.get_tools()
 
     model = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite"
+        model="gemini-3.6-flash"
     )
 
     agent = create_agent(
@@ -64,17 +63,21 @@ async def ask_mcp_agent(question: str):
 
     result = await agent.ainvoke(
         {
-            "messages": [
-                ("user", question)
-            ]
+            "messages": messages
         }
     )
 
     return extract_text(result["messages"][-1].content)
 
-# -------------------------
-# Router Node for MCP or RAG
-# -------------------------
+
+def add_user_message(state: State):
+
+    return {
+        "messages": [
+            HumanMessage(content=state["message"])
+        ]
+    }
+
 
 def router_node(state: State):
 
@@ -99,42 +102,41 @@ def router_node(state: State):
     return {
         "route": "rag"
     }
-# -------------------------
-# 3. LangGraph node
-# -------------------------
+
 
 async def mcp_node(state: State):
 
-    answer = await ask_mcp_agent(state["message"])
+    answer = await ask_mcp_agent(state["messages"])
 
     return {
-        "response": answer
+        "response": answer,
+        "messages": [
+            AIMessage(content=answer)
+        ]
     }
-
-# -------------------------
-#  RAG Node
-# -------------------------
 
 def rag_node(state: State):
 
     answer = retrieve_faq(state["message"])
 
     return {
-        "response": answer
+        "response": answer,
+        "messages": [
+            AIMessage(content=answer)
+        ]
     }
 
 
-# -------------------------
-# 4. Build graph
-# -------------------------
-
 graph_builder = StateGraph(State)
 
+graph_builder.add_node("add_message", add_user_message)
 graph_builder.add_node("router", router_node)
 graph_builder.add_node("mcp", mcp_node)
 graph_builder.add_node("rag", rag_node)
 
-graph_builder.add_edge(START, "router")
+graph_builder.add_edge(START, "add_message")
+graph_builder.add_edge("add_message", "router")
+
 
 def route_question(state: State):
 
@@ -152,4 +154,9 @@ graph_builder.add_conditional_edges(
 
 graph_builder.add_edge("mcp", END)
 graph_builder.add_edge("rag", END)
-graph = graph_builder.compile()
+
+checkpointer = InMemorySaver()
+
+graph = graph_builder.compile(
+    checkpointer=checkpointer
+)

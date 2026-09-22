@@ -5,6 +5,8 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  const [threadId] = useState(() => crypto.randomUUID());
+
   async function sendMessage() {
     if (!message.trim() || loading) {
       return;
@@ -31,6 +33,7 @@ function App() {
         },
         body: JSON.stringify({
           message: userMessage,
+          thread_id: threadId,
         }),
       });
 
