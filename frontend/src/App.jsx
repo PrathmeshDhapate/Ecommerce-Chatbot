@@ -12,7 +12,6 @@ function App() {
 
     const userMessage = message;
 
-    // Show user's message immediately
     setMessages((previousMessages) => [
       ...previousMessages,
       {
@@ -24,28 +23,43 @@ function App() {
     setMessage("");
     setLoading(true);
 
-    const response = await fetch("http://127.0.0.1:8000/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: userMessage,
-      }),
-    });
+    try {
+      const response = await fetch("http://127.0.0.1:8000/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: userMessage,
+        }),
+      });
 
-    const data = await response.json();
+      if (!response.ok) {
+        throw new Error("Server error");
+      }
 
-    // Add bot response
-    setMessages((previousMessages) => [
-      ...previousMessages,
-      {
-        role: "assistant",
-        content: data.answer,
-      },
-    ]);
+      const data = await response.json();
 
-    setLoading(false);
+      setMessages((previousMessages) => [
+        ...previousMessages,
+        {
+          role: "assistant",
+          content: data.answer,
+        },
+      ]);
+    } catch (error) {
+      console.error("Chat request failed:", error);
+
+      setMessages((previousMessages) => [
+        ...previousMessages,
+        {
+          role: "assistant",
+          content: "Sorry, something went wrong. Please try again.",
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
