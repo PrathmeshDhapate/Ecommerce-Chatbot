@@ -2,14 +2,13 @@ from typing import TypedDict
 from typing_extensions import Annotated
 import operator
 
-from langchain_core.messages import BaseMessage, HumanMessage,AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain.agents import create_agent
-
 
 from dotenv import load_dotenv
 from rag import retrieve_faq
@@ -53,7 +52,7 @@ async def ask_mcp_agent(messages):
     tools = await client.get_tools()
 
     model = ChatGoogleGenerativeAI(
-        model="gemini-3.6-flash"
+        model="gemini-3.5-flash-lite"
     )
 
     agent = create_agent(
@@ -63,7 +62,16 @@ async def ask_mcp_agent(messages):
 
     result = await agent.ainvoke(
         {
-            "messages": messages
+            "messages": [
+                HumanMessage(
+                    content=(
+                        "Answer the user's request using the available tools. "
+                        "If the request cannot be answered using any available "
+                        "tool, respond with exactly: UNSUPPORTED\n\n"
+                        f"User request: {messages[-1].content}"
+                    )
+                )
+            ]
         }
     )
 
@@ -79,28 +87,21 @@ def add_user_message(state: State):
     }
 
 
-def router_node(state: State):
+def rag_node(state: State):
 
-    question = state["message"].lower()
+    answer = retrieve_faq(state["message"])
 
-    if any(word in question for word in [
-        "cancel my order",
-        "cancel order",
-        "track my order",
-        "track my package",
-        "where is my order",
-        "order status",
-        "status of order",
-        "return my order",
-        "return this order",
-        "refund my order"
-    ]):
+    if answer is not None:
         return {
-            "route": "mcp"
+            "route": "faq_found",
+            "response": answer,
+            "messages": [
+                AIMessage(content=answer)
+            ]
         }
 
     return {
-        "route": "rag"
+        "route": "mcp",
     }
 
 
@@ -108,6 +109,28 @@ async def mcp_node(state: State):
 
     answer = await ask_mcp_agent(state["messages"])
 
+    if answer.strip() == "UNSUPPORTED":
+        return {
+            "route": "unsupported",
+        }
+
+    return {
+        "route": "mcp_found",
+        "response": answer,
+        "messages": [
+            AIMessage(content=answer)
+        ]
+    }
+
+
+def unsupported_node(state: State):
+
+    answer = (
+        "Sorry, I can't help with that request. "
+        "I can help with commerce-related questions such as "
+        "orders, returns, shipping, payments, and related FAQs."
+    )
+
     return {
         "response": answer,
         "messages": [
@@ -115,45 +138,44 @@ async def mcp_node(state: State):
         ]
     }
 
-def rag_node(state: State):
 
-    answer = retrieve_faq(state["message"])
+def route_after_rag(state: State):
+    return state["route"]
 
-    return {
-        "response": answer,
-        "messages": [
-            AIMessage(content=answer)
-        ]
-    }
+
+def route_after_mcp(state: State):
+    return state["route"]
 
 
 graph_builder = StateGraph(State)
 
 graph_builder.add_node("add_message", add_user_message)
-graph_builder.add_node("router", router_node)
-graph_builder.add_node("mcp", mcp_node)
 graph_builder.add_node("rag", rag_node)
+graph_builder.add_node("mcp", mcp_node)
+graph_builder.add_node("unsupported", unsupported_node)
 
 graph_builder.add_edge(START, "add_message")
-graph_builder.add_edge("add_message", "router")
-
-
-def route_question(state: State):
-
-    return state["route"]
-
+graph_builder.add_edge("add_message", "rag")
 
 graph_builder.add_conditional_edges(
-    "router",
-    route_question,
+    "rag",
+    route_after_rag,
     {
-        "mcp": "mcp",
-        "rag": "rag"
+        "faq_found": END,
+        "mcp": "mcp"
     }
 )
 
-graph_builder.add_edge("mcp", END)
-graph_builder.add_edge("rag", END)
+graph_builder.add_conditional_edges(
+    "mcp",
+    route_after_mcp,
+    {
+        "mcp_found": END,
+        "unsupported": "unsupported"
+    }
+)
+
+graph_builder.add_edge("unsupported", END)
 
 checkpointer = InMemorySaver()
 

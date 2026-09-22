@@ -76,19 +76,18 @@ if new_documents:
 # -------------------------
 
 def retrieve_faq(question: str):
-
     results = vector_store.similarity_search_with_score(
         question,
         k=1
     )
 
     if not results:
-        return ""
+        return None
 
     document, score = results[0]
 
     if score > 0.6:
-        return ""
+        return None
 
     return document.metadata["answer"]
 
