@@ -2,13 +2,18 @@ from typing import TypedDict
 from typing_extensions import Annotated
 import operator
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+    SystemMessage
+)
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain.agents import create_agent
 
 from dotenv import load_dotenv
 from rag import retrieve_faq
@@ -64,13 +69,22 @@ async def ask_mcp_agent(messages):
     # Give Gemini information about the available tools
     model_with_tools = model.bind_tools(tools)
 
-    # Create user message
-    messages = [
+    # Create messages for Gemini
+    mcp_messages = [
+        SystemMessage(
+            content=(
+                "You are a commerce assistant. "
+                "Never invent, guess, or assume values for tool arguments. "
+                "Only use argument values that were explicitly provided by "
+                "the user or are available in the conversation history. "
+                "If a required tool argument is missing, ask the user for it "
+                "instead of calling the tool with an invented value.\n\n"
+                "If the request cannot be answered using any available tool, "
+                "respond with exactly: UNSUPPORTED"
+            )
+        ),
         HumanMessage(
             content=(
-                "Answer the user's request using the available tools. "
-                "If the request cannot be answered using any available "
-                "tool, respond with exactly: UNSUPPORTED\n\n"
                 f"User request: {messages[-1].content}"
             )
         )
@@ -80,7 +94,7 @@ async def ask_mcp_agent(messages):
     # First call to Gemini
     # --------------------------------
 
-    response = await model_with_tools.ainvoke(messages)
+    response = await model_with_tools.ainvoke(mcp_messages)
 
     print("\nFIRST MODEL RESPONSE:")
     print(response)
@@ -95,7 +109,7 @@ async def ask_mcp_agent(messages):
     while response.tool_calls:
 
         # Add Gemini's response containing tool calls
-        messages.append(response)
+        mcp_messages.append(response)
 
         # Handle all requested tools
         for tool_call in response.tool_calls:
@@ -125,7 +139,7 @@ async def ask_mcp_agent(messages):
             print(tool_result)
 
             # Add tool result to conversation
-            messages.append(
+            mcp_messages.append(
                 ToolMessage(
                     content=str(tool_result),
                     tool_call_id=tool_call["id"]
@@ -136,7 +150,7 @@ async def ask_mcp_agent(messages):
         # Send tool result back to Gemini
         # --------------------------------
 
-        response = await model_with_tools.ainvoke(messages)
+        response = await model_with_tools.ainvoke(mcp_messages)
 
         print("\nMODEL RESPONSE AFTER TOOL:")
         print(response)
