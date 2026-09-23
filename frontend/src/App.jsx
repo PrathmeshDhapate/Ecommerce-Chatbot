@@ -1,3 +1,4 @@
+
 import { useRef, useState } from "react";
 
 function App() {
@@ -10,12 +11,6 @@ function App() {
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-
-  function speakAnswer(text) {
-    const utterance = new SpeechSynthesisUtterance(text);
-
-    window.speechSynthesis.speak(utterance);
-  }
 
   async function startRecording() {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -49,16 +44,8 @@ function App() {
 
       const formData = new FormData();
 
-      formData.append(
-        "audio",
-        audioBlob,
-        "recording.webm"
-      );
-
-      formData.append(
-        "thread_id",
-        threadId
-      );
+      formData.append("audio", audioBlob, "recording.webm");
+      formData.append("thread_id", threadId);
 
       try {
         const response = await fetch(
@@ -75,6 +62,31 @@ function App() {
 
         const data = await response.json();
 
+        // Convert Gemini's Base64 audio into binary bytes
+        const audioBytes = Uint8Array.from(
+          atob(data.audio_base64),
+          (character) => character.charCodeAt(0)
+        );
+
+        // Create a WAV audio blob
+        const audioBlob = new Blob(
+          [audioBytes],
+          { type: "audio/wav" }
+        );
+
+        // Create a temporary URL for the audio
+        const audioUrl = URL.createObjectURL(audioBlob);
+
+        // Play Gemini-generated audio
+        const audio = new Audio(audioUrl);
+
+        await audio.play();
+
+        // Clean up the temporary URL after playback starts
+        audio.onended = () => {
+          URL.revokeObjectURL(audioUrl);
+        };
+
         setMessages((previousMessages) => [
           ...previousMessages,
           {
@@ -87,8 +99,6 @@ function App() {
           },
         ]);
 
-        speakAnswer(data.answer);
-
       } catch (error) {
         console.error("Voice request failed:", error);
 
@@ -96,7 +106,8 @@ function App() {
           ...previousMessages,
           {
             role: "assistant",
-            content: "Sorry, something went wrong with voice input.",
+            content:
+              "Sorry, something went wrong with voice input.",
           },
         ]);
       }
@@ -104,9 +115,11 @@ function App() {
 
     recorder.stop();
 
-    recorder.stream.getTracks().forEach((track) => {
-      track.stop();
-    });
+    recorder.stream
+      .getTracks()
+      .forEach((track) => {
+        track.stop();
+      });
 
     setRecording(false);
   }
@@ -157,6 +170,7 @@ function App() {
           content: data.answer,
         },
       ]);
+
     } catch (error) {
       console.error("Chat request failed:", error);
 
@@ -164,9 +178,11 @@ function App() {
         ...previousMessages,
         {
           role: "assistant",
-          content: "Sorry, something went wrong. Please try again.",
+          content:
+            "Sorry, something went wrong. Please try again.",
         },
       ]);
+
     } finally {
       setLoading(false);
     }
@@ -231,3 +247,4 @@ function App() {
 }
 
 export default App;
+

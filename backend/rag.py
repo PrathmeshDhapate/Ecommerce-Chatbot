@@ -23,7 +23,7 @@ with open(FAQ_FILE, "r", encoding="utf-8") as file:
 # -------------------------
 
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="gemini-embedding-001"
+    model="gemini-embedding-2"
 )
 
 

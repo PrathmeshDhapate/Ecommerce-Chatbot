@@ -63,7 +63,7 @@ async def ask_mcp_agent(messages):
 
     # Create Gemini model
     model = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite"
+        model="gemini-3.5-flash"
     )
 
     # Give Gemini information about the available tools
