@@ -11,6 +11,12 @@ function App() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
 
+  function speakAnswer(text) {
+    const utterance = new SpeechSynthesisUtterance(text);
+
+    window.speechSynthesis.speak(utterance);
+  }
+
   async function startRecording() {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
@@ -49,6 +55,11 @@ function App() {
         "recording.webm"
       );
 
+      formData.append(
+        "thread_id",
+        threadId
+      );
+
       try {
         const response = await fetch(
           "http://127.0.0.1:8000/voice",
@@ -64,9 +75,30 @@ function App() {
 
         const data = await response.json();
 
-        console.log(data);
+        setMessages((previousMessages) => [
+          ...previousMessages,
+          {
+            role: "user",
+            content: data.transcription,
+          },
+          {
+            role: "assistant",
+            content: data.answer,
+          },
+        ]);
+
+        speakAnswer(data.answer);
+
       } catch (error) {
         console.error("Voice request failed:", error);
+
+        setMessages((previousMessages) => [
+          ...previousMessages,
+          {
+            role: "assistant",
+            content: "Sorry, something went wrong with voice input.",
+          },
+        ]);
       }
     };
 
@@ -142,11 +174,9 @@ function App() {
 
   return (
     <div className="chat-container">
-
       <h1>Commerce Chatbot</h1>
 
       <div className="messages">
-
         {messages.map((msg, index) => (
           <div
             key={index}
@@ -161,11 +191,9 @@ function App() {
             Thinking...
           </div>
         )}
-
       </div>
 
       <div className="input-area">
-
         <input
           value={message}
           onChange={(event) => setMessage(event.target.value)}
@@ -197,9 +225,7 @@ function App() {
         >
           Stop Recording
         </button>
-
       </div>
-
     </div>
   );
 }

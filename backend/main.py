@@ -1,5 +1,5 @@
 import base64
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile,Form
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -64,8 +64,12 @@ async def chat(request: ChatRequest):
 
 
 @app.post("/voice")
-async def voice(audio: UploadFile = File(...)):
+async def voice(
+    audio: UploadFile = File(...),
+    thread_id: str = Form(...)
+):
 
+    print("Thread ID:", thread_id)
     print("Filename:", audio.filename)
     print("Content type:", audio.content_type)
 
@@ -95,7 +99,24 @@ async def voice(audio: UploadFile = File(...)):
     print("\nTRANSCRIPTION:")
     print(interaction.output_text)
 
+    result = await graph.ainvoke(
+        {
+            "message": interaction.output_text,
+            "route": "",
+            "response": ""
+        },
+        config={
+            "configurable": {
+                "thread_id": thread_id
+            }
+        }
+    )
+
+    print("\nLANGGRAPH RESPONSE:")
+    print(result["response"])
+
     return {
-        "transcription": interaction.output_text
+        "transcription": interaction.output_text,
+        "answer": result["response"]
     }
 
