@@ -79,20 +79,23 @@ async def ask_mcp_agent(messages):
                 "the user or are available in the conversation history. "
                 "If a required tool argument is missing, ask the user for it "
                 "instead of calling the tool with an invented value.\n\n"
+                "If the user provides a missing value in a follow-up message, "
+                "use the conversation history to understand what that value "
+                "refers to and continue the previous request.\n\n"
                 "If the request cannot be answered using any available tool, "
                 "respond with exactly: UNSUPPORTED"
             )
         ),
-        HumanMessage(
-            content=(
-                f"User request: {messages[-1].content}"
-            )
-        )
+        *messages
     ]
 
     # --------------------------------
     # First call to Gemini
     # --------------------------------
+
+    print("\nMCP MESSAGES:")
+    for message in mcp_messages:
+        print(type(message).__name__, ":", message.content)
 
     response = await model_with_tools.ainvoke(mcp_messages)
 

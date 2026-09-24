@@ -23,7 +23,7 @@ with open(FAQ_FILE, "r", encoding="utf-8") as file:
 # -------------------------
 
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="gemini-embedding-2"
+    model="gemini-embedding-001"
 )
 
 
@@ -82,24 +82,23 @@ def retrieve_faq(question: str):
     )
 
     if not results:
+        print("RAG: No results")
         return None
 
     document, score = results[0]
 
+    print("\nRAG QUERY:")
+    print(repr(question))
+
+    print("RAG SCORE:")
+    print(score)
+
+    print("RAG MATCH:")
+    print(document.page_content)
+
     if score > 0.6:
+        print("RAG: Rejected")
         return None
 
+    print("RAG: FAQ FOUND")
     return document.metadata["answer"]
-
-
-# -------------------------
-# 6. Test
-# -------------------------
-
-if __name__ == "__main__":
-
-    question = "Can I return something?"
-
-    answer = retrieve_faq(question)
-
-    print(answer)
