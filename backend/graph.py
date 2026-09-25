@@ -2,6 +2,7 @@ from typing import TypedDict
 from typing_extensions import Annotated
 import operator
 import time
+import asyncio
 
 from langchain_core.messages import (
     BaseMessage,
@@ -41,6 +42,8 @@ MCP_TOOLS = None
 
 async def initialize_mcp():
     global MCP_TOOLS
+
+    print("MCP_TOOLS BEFORE:", MCP_TOOLS is None)
 
     if MCP_TOOLS is None:
         print("\nLoading MCP tools...")
@@ -85,26 +88,14 @@ def extract_text(content):
 
 async def ask_mcp_agent(messages):
 
-    # Initialize MCP only if tools haven't
-    # already been loaded.
     await initialize_mcp()
-
     tools = MCP_TOOLS
-
-    # ========================================
-    # Create Gemini model
-    # ========================================
 
     model = ChatGoogleGenerativeAI(
         model="gemini-3.5-flash-lite"
     )
 
-    # Give Gemini information about the available tools
     model_with_tools = model.bind_tools(tools)
-
-    # ========================================
-    # Create messages for Gemini
-    # ========================================
 
     mcp_messages = [
         SystemMessage(
@@ -127,122 +118,86 @@ async def ask_mcp_agent(messages):
         *messages
     ]
 
-    # ========================================
-    # First call to Gemini
-    # ========================================
-
-    print("\nMCP MESSAGES:")
-
-    for message in mcp_messages:
-        print(
-            type(message).__name__,
-            ":",
-            message.content
-        )
-
+    
+    # First Gemini call
     start = time.perf_counter()
 
-    response = await model_with_tools.ainvoke(mcp_messages)
+    response = await model_with_tools.ainvoke(
+        mcp_messages
+    )
 
     end = time.perf_counter()
 
-    print(f"Gemini first call: {end - start:.3f}s")
+    print(
+        f"Gemini first call: {end - start:.3f}s"
+    )
 
-    print("\nFIRST MODEL RESPONSE:")
-    print(response)
+    # Add Gemini's tool request to the conversation
+    mcp_messages.append(response)
 
-    print("\nTOOL CALLS:")
-    print(response.tool_calls)
+    # Execute MCP tools
+    tool_tasks = []
 
-    # ========================================
-    # Tool calling loop
-    # ========================================
+    for tool_call in response.tool_calls:
 
-    while response.tool_calls:
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
 
-        # Add Gemini's response containing tool calls
-        mcp_messages.append(response)
-
-        # Handle all requested tools
-        for tool_call in response.tool_calls:
-
-            print("\nTOOL REQUESTED:")
-            print(tool_call)
-
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-
-            print("\nTOOL NAME:")
-            print(tool_name)
-
-            print("\nTOOL ARGUMENTS:")
-            print(tool_args)
-
-            # Find the requested tool
-            tool = next(
-                tool
-                for tool in tools
-                if tool.name == tool_name
-            )
-
-            # ====================================
-            # Execute MCP tool
-            # ====================================
-
-            start = time.perf_counter()
-
-            tool_result = await tool.ainvoke(tool_args)
-
-            end = time.perf_counter()
-
-            print(
-                f"MCP tool execution: "
-                f"{end - start:.3f}s"
-            )
-
-            print("\nTOOL RESULT:")
-            print(tool_result)
-
-            # Add tool result to conversation
-            mcp_messages.append(
-                ToolMessage(
-                    content=str(tool_result),
-                    tool_call_id=tool_call["id"]
-                )
-            )
-
-        # ====================================
-        # Send tool result back to Gemini
-        # ====================================
-
-        start = time.perf_counter()
-
-        response = await model_with_tools.ainvoke(
-            mcp_messages
+        tool = next(
+            tool
+            for tool in tools
+            if tool.name == tool_call["name"]
         )
 
-        end = time.perf_counter()
-
-        print(
-            f"Gemini final call: "
-            f"{end - start:.3f}s"
+        tool_tasks.append(
+            tool.ainvoke(tool_args)
         )
 
-        print("\nMODEL RESPONSE AFTER TOOL:")
-        print(response)
+    print("\nExecuting MCP tools concurrently...")
 
-        print("\nTOOL CALLS AFTER TOOL:")
-        print(response.tool_calls)
+    start = time.perf_counter()
 
-    # ========================================
-    # Final response
-    # ========================================
+    tool_results = await asyncio.gather(
+        *tool_tasks
+    )
 
-    print("\nFINAL RESPONSE:")
-    print(response.content)
+    end = time.perf_counter()
 
-    return extract_text(response.content)
+    print(
+        f"MCP tools total execution: {end - start:.3f}s"
+    )
 
+    for tool_call, tool_result in zip(
+        response.tool_calls,
+        tool_results
+    ):
+
+        print("\nTOOL RESULT:")
+        print(tool_result)
+
+        mcp_messages.append(
+            ToolMessage(
+                content=str(tool_result),
+                tool_call_id=tool_call["id"]
+            )
+        )
+
+    # Final Gemini call
+    start = time.perf_counter()
+
+    final_response = await model_with_tools.ainvoke(
+        mcp_messages
+    )
+
+    end = time.perf_counter()
+
+    print(
+        f"Gemini final call: {end - start:.3f}s"
+    )
+
+    return extract_text(
+        final_response.content
+    )
 
 # ============================================
 # LANGGRAPH NODES
