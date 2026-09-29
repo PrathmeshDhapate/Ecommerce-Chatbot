@@ -81,14 +81,14 @@ def extract_text(content):
 
     return str(content)
 
-
 # ============================================
-# MCP AGENT
+# MCP AGENT NODE
 # ============================================
 
-async def ask_mcp_agent(messages):
+async def mcp_agent_node(state: State):
 
     await initialize_mcp()
+
     tools = MCP_TOOLS
 
     model = ChatGoogleGenerativeAI(
@@ -100,26 +100,71 @@ async def ask_mcp_agent(messages):
     mcp_messages = [
         SystemMessage(
             content=(
-                "You are a commerce assistant. "
-                "Never invent, guess, or assume values for tool arguments. "
-                "Only use argument values that were explicitly provided by "
-                "the user or are available in the conversation history. "
-                "If a required tool argument is missing, ask the user for it "
-                "instead of calling the tool with an invented value.\n\n"
+                """You are a commerce assistant that MUST use the available MCP tools
+                for order-specific information.
 
-                "If the user provides a missing value in a follow-up message, "
-                "use the conversation history to understand what that value "
-                "refers to and continue the previous request.\n\n"
+                STRICT ORDER RULES:
 
-                "If the request cannot be answered using any available tool, "
-                "respond with exactly: UNSUPPORTED"
+                1. For ANY question about a specific order, you MUST use the
+                appropriate MCP tool. Never answer an order-specific question
+                from general knowledge or from assumptions.
+
+                2. NEVER invent, guess, infer, or fabricate tool arguments.
+
+                3. For get_order_status, use the customer_id and order_id exactly
+                as provided by the user or as explicitly available in the conversation
+                history.
+
+                4. If get_order_status requires a customer_id and the customer_id
+                is NOT available in the current user message or conversation history,
+                DO NOT call the tool. Ask the user for the customer ID.
+
+                5. An order ID by itself does NOT give you permission to invent
+                or assume a customer ID.
+
+                6. Do not assume that different orders belong to the same customer.
+                Each order must be associated with its explicitly provided customer ID.
+
+                7. If multiple orders are requested, determine the customer ID
+                for EACH order separately. Never apply one customer ID to another
+                order unless the user explicitly says they belong to the same customer.
+
+                8. If the user refers to an order indirectly using words such as
+                "it", "this", "that order", "my order", or "the order", resolve
+                the reference only if a specific order is clearly identifiable
+                from the conversation history.
+
+                9. If an order reference cannot be resolved unambiguously,
+                ask the user for clarification instead of guessing.
+
+                10. After a tool returns a result, use the actual tool result.
+                Never replace, modify, or contradict values returned by the tool.
+
+                11. For shipping, payment, tracking, returns, cancellation,
+                exchanges, warranty, size, account, loyalty, product care,
+                support, and other commerce requests, use the appropriate MCP
+                tool whenever the required information is available.
+
+                12. For multiple independent tool calls, request all required
+                tools and allow the tool executor to execute them concurrently.
+
+                13. If a required argument is genuinely unavailable, ask the user
+                for that argument.
+
+                14. If the request cannot be answered using the available MCP tools,
+                respond with exactly: UNSUPPORTED
+
+                IMPORTANT:
+                The conversation history is context, not permission to guess.
+                Only use information that is explicitly present in the conversation.
+
+                Never fabricate order status, customer IDs, tracking numbers,
+                dates, prices, or any other order information."""
             )
         ),
-        *messages
+        *state["messages"]
     ]
 
-    
-    # First Gemini call
     start = time.perf_counter()
 
     response = await model_with_tools.ainvoke(
@@ -129,19 +174,35 @@ async def ask_mcp_agent(messages):
     end = time.perf_counter()
 
     print(
-        f"Gemini first call: {end - start:.3f}s"
+        f"Gemini MCP call: {end - start:.3f}s"
     )
 
-    # Add Gemini's tool request to the conversation
-    mcp_messages.append(response)
+    if response.tool_calls:
+        return {
+            "messages": [response]
+        }
 
-    # Execute MCP tools
+    return {
+        "messages": [response],
+        "response": extract_text(response.content)
+    }
+
+# ============================================
+# MCP TOOL EXECUTOR
+# ============================================
+
+async def tool_executor_node(state: State):
+
+    await initialize_mcp()
+
+    tools = MCP_TOOLS
+
+    # Get the latest Gemini message
+    last_message = state["messages"][-1]
+
     tool_tasks = []
 
-    for tool_call in response.tool_calls:
-
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
+    for tool_call in last_message.tool_calls:
 
         tool = next(
             tool
@@ -150,7 +211,7 @@ async def ask_mcp_agent(messages):
         )
 
         tool_tasks.append(
-            tool.ainvoke(tool_args)
+            tool.ainvoke(tool_call["args"])
         )
 
     print("\nExecuting MCP tools concurrently...")
@@ -167,37 +228,26 @@ async def ask_mcp_agent(messages):
         f"MCP tools total execution: {end - start:.3f}s"
     )
 
+    tool_messages = []
+
     for tool_call, tool_result in zip(
-        response.tool_calls,
+        last_message.tool_calls,
         tool_results
     ):
 
         print("\nTOOL RESULT:")
         print(tool_result)
 
-        mcp_messages.append(
+        tool_messages.append(
             ToolMessage(
                 content=str(tool_result),
                 tool_call_id=tool_call["id"]
             )
         )
 
-    # Final Gemini call
-    start = time.perf_counter()
-
-    final_response = await model_with_tools.ainvoke(
-        mcp_messages
-    )
-
-    end = time.perf_counter()
-
-    print(
-        f"Gemini final call: {end - start:.3f}s"
-    )
-
-    return extract_text(
-        final_response.content
-    )
+    return {
+        "messages": tool_messages
+    }
 
 # ============================================
 # LANGGRAPH NODES
@@ -213,31 +263,117 @@ def add_user_message(state: State):
         ]
     }
 
+async def router_node(state: State):
+
+    model = ChatGoogleGenerativeAI(
+        model="gemini-3.5-flash-lite"
+    )
+
+    router_prompt = """
+You are a routing classifier for a commerce customer-support chatbot.
+
+Decide whether the user's latest message should be handled by:
+
+RAG:
+- General FAQ questions
+- Return policy questions
+- Shipping policy questions
+- Payment information questions
+- Warranty information questions
+- Size guide questions
+- General commerce information
+
+MCP:
+- Questions about a specific order
+- Order status
+- Tracking
+- Cancelling an order
+- Processing a return for a specific order
+- Processing an exchange for a specific order
+- Any follow-up question referring to a specific order from the conversation history
+- Messages containing references such as "it", "this", "that order", "my order", "the order",
+  but ONLY when the conversation history contains a specific order or order-related context
+
+IMPORTANT:
+Use the conversation history to understand references such as
+"it", "this", "that", or "the order".
+
+For example:
+
+Previous message:
+"What is the status of order ORD-1003-D?"
+
+Current message:
+"Can I return this?"
+
+The correct route is MCP.
+
+However:
+
+"What is your return policy?"
+
+should be routed to RAG because it is a general policy question.
+
+Return ONLY one word:
+
+rag
+
+or
+
+mcp
+
+IMPORTANT:
+
+Do NOT route a message to MCP merely because it contains
+"it", "this", or "that".
+
+If there is no specific order or order-related context
+in the conversation history, treat the message as a general
+commerce/return question and route it to RAG.
+
+Example:
+
+New conversation:
+"Can I return this?"
+
+Correct route: rag
+
+Conversation:
+User: "What is the status of order ORD-1003-D?"
+Assistant: "Order ORD-1003-D was delivered."
+
+User: "Can I return this?"
+
+Correct route: mcp
+"""
+
+    router_messages = [
+        SystemMessage(content=router_prompt),
+        *state["messages"]
+    ]
+
+    response = await model.ainvoke(router_messages)
+
+    route = extract_text(response.content).strip().lower()
+
+    if route not in ["rag", "mcp"]:
+        route = "rag"
+
+    print(f"ROUTER: {route.upper()}")
+
+    return {
+        "route": route
+    }
 
 def rag_node(state: State):
 
     question = state["message"]
 
-    # Order-specific requests should go directly to MCP.
-    order_specific_keywords = [
-        "order",
-        "order id",
-        "order number",
-        "customer id",
-    ]
-
-    if any(
-        keyword in question.lower()
-        for keyword in order_specific_keywords
-    ):
-        print("RAG: Order-specific query → MCP")
-        return {
-            "route": "mcp",
-        }
-
     answer = retrieve_faq(question)
 
     if answer is not None:
+        print("RAG: FAQ FOUND")
+
         return {
             "route": "faq_found",
             "response": answer,
@@ -246,30 +382,11 @@ def rag_node(state: State):
             ]
         }
 
-    return {
-        "route": "mcp",
-    }
-
-async def mcp_node(state: State):
-
-    answer = await ask_mcp_agent(
-        state["messages"]
-    )
-
-    if answer.strip() == "UNSUPPORTED":
-
-        return {
-            "route": "unsupported",
-        }
+    print("RAG: FAQ NOT FOUND")
 
     return {
-        "route": "mcp_found",
-        "response": answer,
-        "messages": [
-            AIMessage(content=answer)
-        ]
+        "route": "faq_not_found"
     }
-
 
 def unsupported_node(state: State):
 
@@ -291,12 +408,30 @@ def unsupported_node(state: State):
 # ROUTING
 # ============================================
 
+def route_after_router(state: State):
+    return state["route"]
+
 def route_after_rag(state: State):
     return state["route"]
 
 
-def route_after_mcp(state: State):
-    return state["route"]
+
+
+def route_after_mcp_agent(state: State):
+
+    last_message = state["messages"][-1]
+
+    # Gemini requested one or more tools
+    if last_message.tool_calls:
+        return "tools"
+
+    # Gemini did not request a tool
+    answer = extract_text(last_message.content)
+
+    if answer.strip() == "UNSUPPORTED":
+        return "unsupported"
+
+    return "final"
 
 
 # ============================================
@@ -311,18 +446,52 @@ graph_builder.add_node(
 )
 
 graph_builder.add_node(
+    "router",
+    router_node
+)
+
+graph_builder.add_node(
     "rag",
     rag_node
 )
 
 graph_builder.add_node(
-    "mcp",
-    mcp_node
+    "mcp_agent",
+    mcp_agent_node
+)
+
+graph_builder.add_node(
+    "tool_executor",
+    tool_executor_node
 )
 
 graph_builder.add_node(
     "unsupported",
     unsupported_node
+)
+
+graph_builder.add_conditional_edges(
+    "router",
+    route_after_router,
+    {
+        "rag": "rag",
+        "mcp": "mcp_agent"
+    }
+)
+
+graph_builder.add_edge(
+    "tool_executor",
+    "mcp_agent"
+)
+
+graph_builder.add_conditional_edges(
+    "mcp_agent",
+    route_after_mcp_agent,
+    {
+        "tools": "tool_executor",
+        "final": END,
+        "unsupported": "unsupported"
+    }
 )
 
 graph_builder.add_edge(
@@ -332,7 +501,7 @@ graph_builder.add_edge(
 
 graph_builder.add_edge(
     "add_message",
-    "rag"
+    "router"
 )
 
 graph_builder.add_conditional_edges(
@@ -340,16 +509,7 @@ graph_builder.add_conditional_edges(
     route_after_rag,
     {
         "faq_found": END,
-        "mcp": "mcp"
-    }
-)
-
-graph_builder.add_conditional_edges(
-    "mcp",
-    route_after_mcp,
-    {
-        "mcp_found": END,
-        "unsupported": "unsupported"
+        "faq_not_found": "mcp_agent"
     }
 )
 
