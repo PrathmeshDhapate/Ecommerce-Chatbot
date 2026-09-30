@@ -263,108 +263,6 @@ def add_user_message(state: State):
         ]
     }
 
-async def router_node(state: State):
-
-    model = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite"
-    )
-
-    router_prompt = """
-You are a routing classifier for a commerce customer-support chatbot.
-
-Decide whether the user's latest message should be handled by:
-
-RAG:
-- General FAQ questions
-- Return policy questions
-- Shipping policy questions
-- Payment information questions
-- Warranty information questions
-- Size guide questions
-- General commerce information
-
-MCP:
-- Questions about a specific order
-- Order status
-- Tracking
-- Cancelling an order
-- Processing a return for a specific order
-- Processing an exchange for a specific order
-- Any follow-up question referring to a specific order from the conversation history
-- Messages containing references such as "it", "this", "that order", "my order", "the order",
-  but ONLY when the conversation history contains a specific order or order-related context
-
-IMPORTANT:
-Use the conversation history to understand references such as
-"it", "this", "that", or "the order".
-
-For example:
-
-Previous message:
-"What is the status of order ORD-1003-D?"
-
-Current message:
-"Can I return this?"
-
-The correct route is MCP.
-
-However:
-
-"What is your return policy?"
-
-should be routed to RAG because it is a general policy question.
-
-Return ONLY one word:
-
-rag
-
-or
-
-mcp
-
-IMPORTANT:
-
-Do NOT route a message to MCP merely because it contains
-"it", "this", or "that".
-
-If there is no specific order or order-related context
-in the conversation history, treat the message as a general
-commerce/return question and route it to RAG.
-
-Example:
-
-New conversation:
-"Can I return this?"
-
-Correct route: rag
-
-Conversation:
-User: "What is the status of order ORD-1003-D?"
-Assistant: "Order ORD-1003-D was delivered."
-
-User: "Can I return this?"
-
-Correct route: mcp
-"""
-
-    router_messages = [
-        SystemMessage(content=router_prompt),
-        *state["messages"]
-    ]
-
-    response = await model.ainvoke(router_messages)
-
-    route = extract_text(response.content).strip().lower()
-
-    if route not in ["rag", "mcp"]:
-        route = "rag"
-
-    print(f"ROUTER: {route.upper()}")
-
-    return {
-        "route": route
-    }
-
 def rag_node(state: State):
 
     question = state["message"]
@@ -408,9 +306,6 @@ def unsupported_node(state: State):
 # ROUTING
 # ============================================
 
-def route_after_router(state: State):
-    return state["route"]
-
 def route_after_rag(state: State):
     return state["route"]
 
@@ -445,10 +340,7 @@ graph_builder.add_node(
     add_user_message
 )
 
-graph_builder.add_node(
-    "router",
-    router_node
-)
+
 
 graph_builder.add_node(
     "rag",
@@ -468,15 +360,6 @@ graph_builder.add_node(
 graph_builder.add_node(
     "unsupported",
     unsupported_node
-)
-
-graph_builder.add_conditional_edges(
-    "router",
-    route_after_router,
-    {
-        "rag": "rag",
-        "mcp": "mcp_agent"
-    }
 )
 
 graph_builder.add_edge(
@@ -501,7 +384,7 @@ graph_builder.add_edge(
 
 graph_builder.add_edge(
     "add_message",
-    "router"
+    "rag"
 )
 
 graph_builder.add_conditional_edges(
