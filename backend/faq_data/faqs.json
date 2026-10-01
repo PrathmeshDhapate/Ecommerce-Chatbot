@@ -4,11 +4,300 @@
     "answer": "You can return most products within 30 days of delivery."
   },
   {
+    "question": "How long do I have to return something?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "What's the return window?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "How many days do I have to return an item?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "How long can I wait before returning my purchase?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "Can I return something after a few weeks?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "What is the deadline for returning an order?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "How much time do I have to send something back?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "Can I return an item within a month?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+  {
+    "question": "Is there a time limit for returns?",
+    "answer": "You can return most products within 30 days of delivery."
+  },
+
+  {
+    "question": "How do I return an item?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "How do I return something I bought?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "What is the process for returning a product?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "How can I send an item back?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "I want to return something. What do I do?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "Can you explain how returns work?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "What are the steps to return a purchase?",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+  {
+    "question": "Walk me through returning an order.",
+    "answer": "To start a return, you need to provide your order details and follow the return process. Most products can be returned within 30 days of delivery."
+  },
+
+  {
     "question": "How long does shipping take?",
     "answer": "Standard shipping usually takes 5–7 business days."
   },
   {
+    "question": "How many days does delivery take?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "When should my order arrive?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "How long will my delivery take?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "What is the usual delivery time?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "How many days does standard shipping take?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "How quickly will my package be delivered?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "When do orders usually reach customers?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "How long does delivery normally take?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "Delivery me kitna time lagega?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "What is the expected shipping time?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+  {
+    "question": "How long should I expect shipping to take?",
+    "answer": "Standard shipping usually takes 5–7 business days."
+  },
+
+  {
     "question": "What payment methods do you accept?",
     "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "How can I pay for my order?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "Which payment options are available?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "Which cards do you accept?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "Can I pay with a debit card?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "Can I pay with a credit card?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "Do you accept Visa or Mastercard?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "What cards can I use to pay?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "What are my payment options?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "How do I pay?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+  {
+    "question": "Which online payment methods do you support?",
+    "answer": "We accept credit cards, debit cards, and other supported online payment methods."
+  },
+
+  {
+    "question": "How can I track my order?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "How does order tracking work?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "Where can I track my package?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "How do I track my shipment?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "Can I track my order?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "How do I find my tracking information?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "Where is the tracking information for my order?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "How can I see where my package is?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+  {
+    "question": "How do I check shipment progress?",
+    "answer": "You can track a package using the tracking information associated with your order."
+  },
+
+  {
+    "question": "What can you help me with?",
+    "answer": "I can help with order status, package tracking, cancellations, returns, shipping and payment information, size guides, warranty information, account help, loyalty programs, product care, and support information."
+  },
+  {
+    "question": "What can you do?",
+    "answer": "I can help with order status, package tracking, cancellations, returns, shipping and payment information, size guides, warranty information, account help, loyalty programs, product care, and support information."
+  },
+  {
+    "question": "What kind of help do you provide?",
+    "answer": "I can help with order status, package tracking, cancellations, returns, shipping and payment information, size guides, warranty information, account help, loyalty programs, product care, and support information."
+  },
+  {
+    "question": "What services can you help me with?",
+    "answer": "I can help with order status, package tracking, cancellations, returns, shipping and payment information, size guides, warranty information, account help, loyalty programs, product care, and support information."
+  },
+  {
+    "question": "Can you help me with shopping questions?",
+    "answer": "I can help with order status, package tracking, cancellations, returns, shipping and payment information, size guides, warranty information, account help, loyalty programs, product care, and support information."
+  },
+
+  {
+    "question": "Who are you?",
+    "answer": "I'm this store's virtual shopping assistant. I can help with orders, returns, shipping, payments, and other store-related questions."
+  },
+  {
+    "question": "Are you a bot?",
+    "answer": "I'm this store's virtual shopping assistant. I can help with orders, returns, shipping, payments, and other store-related questions."
+  },
+  {
+    "question": "Are you a virtual assistant?",
+    "answer": "I'm this store's virtual shopping assistant. I can help with orders, returns, shipping, payments, and other store-related questions."
+  },
+  {
+    "question": "What are you?",
+    "answer": "I'm this store's virtual shopping assistant. I can help with orders, returns, shipping, payments, and other store-related questions."
+  },
+
+  {
+    "question": "Hi",
+    "answer": "Hello! How can I help you today?"
+  },
+  {
+    "question": "Hello",
+    "answer": "Hello! How can I help you today?"
+  },
+  {
+    "question": "Hey",
+    "answer": "Hello! How can I help you today?"
+  },
+  {
+    "question": "Hello there",
+    "answer": "Hello! How can I help you today?"
+  },
+  {
+    "question": "Good morning",
+    "answer": "Hello! How can I help you today?"
+  },
+  {
+    "question": "Good afternoon",
+    "answer": "Hello! How can I help you today?"
+  },
+  {
+    "question": "Good evening",
+    "answer": "Hello! How can I help you today?"
+  },
+
+  {
+    "question": "Thank you",
+    "answer": "You're welcome! Let me know if there's anything else I can help with."
+  },
+  {
+    "question": "Thanks",
+    "answer": "You're welcome! Let me know if there's anything else I can help with."
+  },
+  {
+    "question": "Thanks for your help",
+    "answer": "You're welcome! Let me know if there's anything else I can help with."
+  },
+  {
+    "question": "Thank you so much",
+    "answer": "You're welcome! Let me know if there's anything else I can help with."
+  },
+
+  {
+    "question": "Bye",
+    "answer": "Thanks for chatting! Come back anytime if you need help."
+  },
+  {
+    "question": "Goodbye",
+    "answer": "Thanks for chatting! Come back anytime if you need help."
+  },
+  {
+    "question": "See you later",
+    "answer": "Thanks for chatting! Come back anytime if you need help."
   }
 ]

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import "./App.css"
+import "./App.css";
 
 function App() {
   const [message, setMessage] = useState("");
@@ -48,10 +48,13 @@ function App() {
       formData.append("thread_id", threadId);
 
       try {
-        const response = await fetch("http://127.0.0.1:8000/voice", {
-          method: "POST",
-          body: formData,
-        });
+        const response = await fetch(
+          "http://127.0.0.1:8000/voice",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
 
         if (!response.ok) {
           throw new Error("Voice request failed");
@@ -59,24 +62,22 @@ function App() {
 
         const data = await response.json();
 
-        // Convert Gemini's Base64 audio into binary bytes
         const audioBytes = Uint8Array.from(
           atob(data.audio_base64),
-          (character) => character.charCodeAt(0),
+          (character) => character.charCodeAt(0)
         );
 
-        // Create a WAV audio blob
-        const audioBlob = new Blob([audioBytes], { type: "audio/wav" });
+        const audioBlob = new Blob(
+          [audioBytes],
+          { type: "audio/wav" }
+        );
 
-        // Create a temporary URL for the audio
         const audioUrl = URL.createObjectURL(audioBlob);
 
-        // Play Gemini-generated audio
         const audio = new Audio(audioUrl);
 
         await audio.play();
 
-        // Clean up the temporary URL after playback starts
         audio.onended = () => {
           URL.revokeObjectURL(audioUrl);
         };
@@ -99,7 +100,8 @@ function App() {
           ...previousMessages,
           {
             role: "assistant",
-            content: "Sorry, something went wrong with voice input.",
+            content:
+              "Sorry, something went wrong with voice input.",
           },
         ]);
       }
@@ -107,9 +109,9 @@ function App() {
 
     recorder.stop();
 
-    recorder.stream.getTracks().forEach((track) => {
-      track.stop();
-    });
+    recorder.stream
+      .getTracks()
+      .forEach((track) => track.stop());
 
     setRecording(false);
   }
@@ -133,16 +135,19 @@ function App() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: userMessage,
-          thread_id: threadId,
-        }),
-      });
+      const response = await fetch(
+        "http://127.0.0.1:8000/chat",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: userMessage,
+            thread_id: threadId,
+          }),
+        }
+      );
 
       if (!response.ok) {
         throw new Error("Server error");
@@ -164,7 +169,8 @@ function App() {
         ...previousMessages,
         {
           role: "assistant",
-          content: "Sorry, something went wrong. Please try again.",
+          content:
+            "Sorry, something went wrong. Please try again.",
         },
       ]);
     } finally {
@@ -174,25 +180,38 @@ function App() {
 
   return (
     <div className="chat-container">
+
       <div className="chat-header">
         <h1>Commerce Assistant</h1>
         <span>Online</span>
       </div>
 
       <div className="messages">
+
         {messages.map((msg, index) => (
-          <div key={index} className={`message ${msg.role}`}>
+          <div
+            key={index}
+            className={`message ${msg.role}`}
+          >
             {msg.content}
           </div>
         ))}
 
-        {loading && <div className="message assistant">Thinking...</div>}
+        {loading && (
+          <div className="message assistant">
+            Thinking...
+          </div>
+        )}
+
       </div>
 
       <div className="input-area">
+
         <input
           value={message}
-          onChange={(event) => setMessage(event.target.value)}
+          onChange={(event) =>
+            setMessage(event.target.value)
+          }
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               sendMessage();
@@ -201,18 +220,29 @@ function App() {
           placeholder="Ask about orders, returns, shipping..."
         />
 
-        <button onClick={sendMessage} disabled={loading}>
+        <button
+          onClick={sendMessage}
+          disabled={loading}
+        >
           {loading ? "Sending..." : "Send"}
         </button>
 
-        <button onClick={startRecording} disabled={recording}>
+        <button
+          onClick={startRecording}
+          disabled={recording}
+        >
           🎙 Start
         </button>
 
-        <button onClick={stopRecording} disabled={!recording}>
+        <button
+          onClick={stopRecording}
+          disabled={!recording}
+        >
           ⏹ Stop
         </button>
+
       </div>
+
     </div>
   );
 }

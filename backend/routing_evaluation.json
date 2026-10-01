@@ -1,0 +1,209 @@
+{
+  "meta": {
+    "notes": [
+      "expected = where the query should finally be handled.",
+      "RAG should accept only when the FAQ directly answers the query.",
+      "For MCP, unsupported, and mixed queries, RAG should not incorrectly accept.",
+      "Track false accepts, false rejects, and wrong FAQ matches."
+    ]
+  },
+  "queries": [
+    {
+      "query": "what's the deadline for sending stuff back?",
+      "expected": "faq"
+    },
+    {
+      "query": "can i get my money back if i return within a month",
+      "expected": "faq"
+    },
+    {
+      "query": "walk me through returning a purchase",
+      "expected": "faq"
+    },
+    {
+      "query": "when do orders usually reach customers",
+      "expected": "faq"
+    },
+    {
+      "query": "delivery me kitna time lagega",
+      "expected": "faq"
+    },
+    {
+      "query": "do you take visa or mastercard",
+      "expected": "faq"
+    },
+    {
+      "query": "how do i pay for my order",
+      "expected": "faq"
+    },
+    {
+      "query": "how do i know where my parcel is",
+      "expected": "faq",
+      "acceptable": ["mcp"]
+    },
+
+    {
+      "query": "What is the status of order ORD-123?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Where is my order?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Track my package",
+      "expected": "mcp",
+      "acceptable": ["faq"]
+    },
+    {
+      "query": "Cancel order ORD-123",
+      "expected": "mcp"
+    },
+    {
+      "query": "Cancel my order",
+      "expected": "mcp"
+    },
+    {
+      "query": "I want to return order ORD-456",
+      "expected": "mcp"
+    },
+    {
+      "query": "I want to return something",
+      "expected": "mcp",
+      "acceptable": ["faq"]
+    },
+    {
+      "query": "Can I return the shoes I bought last week?",
+      "expected": "mcp"
+    },
+    {
+      "query": "What is the return policy for order ORD-123?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Is my order eligible for return?",
+      "expected": "mcp"
+    },
+    {
+      "query": "I want to exchange these for size 9",
+      "expected": "mcp"
+    },
+    {
+      "query": "When will my package arrive?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Why is my delivery late?",
+      "expected": "mcp"
+    },
+    {
+      "query": "What is my refund status?",
+      "expected": "mcp",
+      "acceptable": ["unsupported"]
+    },
+    {
+      "query": "How do I get a refund?",
+      "expected": "mcp",
+      "acceptable": ["unsupported"]
+    },
+    {
+      "query": "How long do refunds take?",
+      "expected": "mcp",
+      "acceptable": ["unsupported"]
+    },
+    {
+      "query": "Do you accept UPI?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Can I pay cash on delivery?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Do you ship internationally?",
+      "expected": "mcp"
+    },
+    {
+      "query": "Is free shipping available?",
+      "expected": "mcp"
+    },
+    {
+      "query": "What is the size guide for the Air Max 90?",
+      "expected": "mcp"
+    },
+    {
+      "query": "What is the warranty on the Dell XPS 13?",
+      "expected": "mcp"
+    },
+    {
+      "query": "How many loyalty points do I have?",
+      "expected": "mcp",
+      "acceptable": ["unsupported"]
+    },
+    {
+      "query": "How do I wash the cotton t-shirt I bought?",
+      "expected": "mcp"
+    },
+
+    {
+      "query": "What's your return policy and how long does shipping take?",
+      "expected": "mixed"
+    },
+    {
+      "query": "What is the return window, and where is order ORD-123?",
+      "expected": "mixed"
+    },
+
+    {
+      "query": "What's the weather today?",
+      "expected": "unsupported"
+    },
+    {
+      "query": "Write me a poem about the sea",
+      "expected": "unsupported"
+    },
+    {
+      "query": "Who won the IPL last year?",
+      "expected": "unsupported"
+    },
+    {
+      "query": "Write a Python script to sort a list",
+      "expected": "unsupported"
+    },
+    {
+      "query": "Tell me a joke",
+      "expected": "unsupported"
+    },
+    {
+      "query": "Is this jacket waterproof?",
+      "expected": "unsupported",
+      "acceptable": ["mcp"]
+    },
+    {
+      "query": "Hi",
+      "expected": "unsupported"
+    },
+    {
+      "query": "return",
+      "expected": "mcp",
+      "acceptable": ["faq"]
+    },
+    {
+      "query": "asdfghjkl",
+      "expected": "unsupported"
+    },
+
+    {
+      "query": "I don't want to return my order",
+      "expected": "unsupported"
+    },
+    {
+      "query": "I don't need a return",
+      "expected": "unsupported"
+    },
+    {
+      "query": "I already received my order and don't want to return it",
+      "expected": "unsupported"
+    }
+  ]
+}
