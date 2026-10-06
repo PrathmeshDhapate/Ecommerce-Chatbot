@@ -1,29 +1,25 @@
-from typing import TypedDict
-from typing_extensions import Annotated
 
 import operator
 import time
+
+from typing import Annotated, TypedDict
+
 from langchain_core.callbacks import BaseCallbackHandler
-
-from dotenv import load_dotenv
-
 from langchain_core.messages import (
+    AIMessage,
     BaseMessage,
     HumanMessage,
-    AIMessage,
+    SystemMessage,
 )
-
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain.agents import create_agent
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.prebuilt import ToolNode, tools_condition
 
-from rag import retrieve_faq_for_router
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
-
-load_dotenv()
+from rag import retrieve_faq
 
 
 # ============================================================
@@ -34,40 +30,30 @@ MCP_CLIENT = MultiServerMCPClient(
     {
         "commerce": {
             "transport": "sse",
-            "url": (
-                "https://slavpilus-mpc-for-commerce-platforms.hf.space"
-                "/gradio_api/mcp/sse"
-            ),
+            "url": "https://slavpilus-mpc-for-commerce-platforms.hf.space/gradio_api/mcp/sse",
         }
     }
 )
 
 
-# ============================================================
-# CACHED MCP COMPONENTS
-# ============================================================
-
 MCP_TOOLS = None
-MCP_AGENT = None
+MCP_LLM = None
+MCP_TOOL_NODE = None
 
 
 # ============================================================
-# LANGGRAPH STATE
+# STATE
 # ============================================================
 
 class State(TypedDict):
-    messages: Annotated[
-        list[BaseMessage],
-        operator.add
-    ]
-
+    messages: Annotated[list[BaseMessage], operator.add]
     message: str
     route: str
     response: str
 
 
 # ============================================================
-# HELPER
+# HELPERS
 # ============================================================
 
 def extract_text(content):
@@ -76,402 +62,131 @@ def extract_text(content):
         return content
 
     if isinstance(content, list):
-        return "".join(
-            item.get("text", "")
-            for item in content
-            if (
-                isinstance(item, dict)
-                and item.get("type") == "text"
-            )
-        )
+        parts = []
+
+        for item in content:
+            if isinstance(item, dict):
+                if "text" in item:
+                    parts.append(item["text"])
+            elif isinstance(item, str):
+                parts.append(item)
+
+        return "".join(parts)
+
+    if isinstance(content, dict):
+        return content.get("text", "")
 
     return str(content)
 
 
 # ============================================================
-# LLM #1 — RAG JUDGE
+# RAG JUDGE PROMPT
 # ============================================================
 
+
 RAG_JUDGE_PROMPT = """
-You are a routing judge for a commerce FAQ chatbot.
+You are a routing judge for an e-commerce chatbot.
 
-Your ONLY job is to decide whether the retrieved FAQ answer
-is sufficient to answer the user's current question.
+Your job is to decide whether the user's question should be
+answered using the retrieved FAQ or sent to MCP tools.
 
-You must choose exactly ONE label:
+USER QUESTION:
+{query}
+
+RETRIEVED FAQ ANSWER:
+{faq_answer}
+
+Return ONLY one of:
 
 RAG
 NOT_RAG
 
-Use RAG when:
-- The user is asking for general information or a policy.
-- The retrieved FAQ directly answers the user's question.
-- The retrieved FAQ provides enough information to answer the question
-  without needing a live system or an MCP tool.
-- The question is about topics covered by the retrieved FAQ.
 
-Examples of questions that should usually be RAG:
-- "What is the return policy?"
-- "How long does shipping take?"
-- "What payment methods do you accept?"
-- "What is your warranty policy?"
-- "How do I track a package?" 
-  (when the FAQ provides general tracking instructions)
+========================
+CHOOSE RAG
+========================
 
-Use NOT_RAG when:
-- The user asks about a specific order, customer, package, or account.
-- The user needs live or real-time information.
-- The user wants to perform an action.
-- The user asks to cancel an order.
-- The user asks to process a return for a specific order.
-- The user asks for the current status/location of a specific package.
-- The retrieved FAQ does not actually answer the question.
-- The retrieved FAQ answer is empty.
-- The user asks something unrelated to the retrieved FAQ.
-
-IMPORTANT:
-Do NOT classify a question as NOT_RAG merely because it is about
-returns, shipping, payments, tracking, or another commerce topic.
-
-The key question is:
-
-"Can the retrieved FAQ answer the user's question directly,
-without calling an MCP tool?"
-
-If YES → RAG
-If NO → NOT_RAG
+Choose RAG when the user's question is a general/static
+information question AND the retrieved FAQ provides the
+information needed to answer it.
 
 Examples:
 
-User: "What is the return policy?"
-FAQ: "Most products can be returned within 30 days of delivery."
-→ RAG
+User question:
+"How long does shipping take?"
 
-User: "Can I return order ORD-1005-D?"
-FAQ: "Most products can be returned within 30 days of delivery."
-→ NOT_RAG
+Retrieved FAQ:
+"Shipping takes 5–7 business days."
 
-User: "How long does shipping take?"
-FAQ: "Orders usually arrive within 5–7 business days."
-→ RAG
-
-User: "Where is my order ORD-1005-D?"
-FAQ: "Orders usually arrive within 5–7 business days."
-→ NOT_RAG
-
-User: "Can you cancel order ORD-1005-D?"
-FAQ: "Most products can be returned within 30 days of delivery."
-→ NOT_RAG
-
-Do not answer the user's question.
-Do not explain your decision.
-Do not return JSON.
-Do not return a list.
-Do not return any additional text.
-
-Return exactly one of:
-
+Decision:
 RAG
 
-NOT_RAG
-"""
 
+User question:
+"What is your return policy?"
 
-# ============================================================
-# LLM #2 — MCP AGENT
-# ============================================================
+Retrieved FAQ:
+"Most products can be returned within 30 days of delivery."
 
-MCP_SYSTEM_PROMPT = """
-You are a commerce support agent.
+Decision:
+RAG
 
-You have access to MCP tools for handling commerce-related requests.
 
-IMPORTANT RULES:
+User question:
+"What payment methods do you accept?"
 
-1. Use an MCP tool when the user's request can be handled by one
-   of the available tools.
+Retrieved FAQ:
+"We accept cards, debit cards, and online payments."
 
-2. Never invent, guess, or fabricate customer IDs.
+Decision:
+RAG
 
-3. If the user explicitly provides a customer ID, use exactly that
-   customer ID.
 
-4. If a tool requires a customer ID but the user has not provided one,
-   do not invent one such as:
+========================
+CHOOSE NOT_RAG
+========================
 
-   - "unknown"
-   - "default_customer"
-   - "CUST-001"
-   - any other guessed value
+Choose NOT_RAG when the question requires specific,
+live, account-related, order-related, package-related,
+or action-related information.
 
-   Ask the user for the customer ID instead.
+Examples:
 
-5. For unsupported requests, do not call an unrelated MCP tool.
+"What is the status of ORD-1005-D?"
+→ NOT_RAG
 
-   Clearly explain that you can only help with commerce-related
-   requests.
+"Where is my package?"
+→ NOT_RAG
 
-6. Always use the actual MCP tool result when generating the final
-   answer.
+"Track order ORD-1005-D."
+→ NOT_RAG
 
-7. Never fabricate information that was not returned by an MCP tool.
+"Cancel order ORD-1005-D."
+→ NOT_RAG
 
-8. For order-specific questions, always use the appropriate MCP tool.
+"Process a return for ORD-1005-D."
+→ NOT_RAG
 
-9. For cancellation requests, if the cancellation reason is required
-   and the user has not provided one, ask the user for the reason
-   instead of inventing one.
 
-10. If a required argument is genuinely unavailable, ask the user
-    for that argument.
+========================
+IMPORTANT
+========================
 
-11. If the request cannot be answered using the available MCP tools,
-    clearly explain that the request is outside the supported
-    commerce capabilities.
+Do NOT choose NOT_RAG merely because an MCP tool exists
+that could provide similar information.
 
-12. Never fabricate order status, customer IDs, tracking numbers,
-    dates, prices, refund information, or any other commerce data.
-"""
+If the user's question is general/static and the retrieved
+FAQ contains the answer, choose RAG.
 
-class MCPTimingCallback(BaseCallbackHandler):
+The retrieved FAQ does not need to have exactly the same
+wording as the question. Semantic equivalence is sufficient.
 
-    def __init__(self):
-        self.starts = {}
+However, if the question requires information about a
+specific order, customer, package, account, or live status,
+choose NOT_RAG even if the retrieved FAQ is semantically
+similar.
 
-    def on_chat_model_start(
-        self,
-        serialized,
-        messages,
-        run_id,
-        **kwargs
-    ):
-        self.starts[run_id] = time.perf_counter()
-
-        print("\n>>> MCP AGENT LLM START")
-
-    def on_llm_end(
-        self,
-        response,
-        run_id,
-        **kwargs
-    ):
-        if run_id in self.starts:
-            elapsed = time.perf_counter() - self.starts.pop(run_id)
-
-            print(
-                f">>> MCP AGENT LLM END: "
-                f"{elapsed:.3f}s"
-            )
-
-    def on_tool_start(
-        self,
-        serialized,
-        input_str,
-        run_id,
-        **kwargs
-    ):
-        self.starts[run_id] = time.perf_counter()
-
-        tool_name = serialized.get(
-            "name",
-            "unknown"
-        )
-
-        print(
-            f"\n>>> MCP TOOL START: "
-            f"{tool_name}"
-        )
-
-    def on_tool_end(
-        self,
-        output,
-        run_id,
-        **kwargs
-    ):
-        if run_id in self.starts:
-            elapsed = time.perf_counter() - self.starts.pop(run_id)
-
-            print(
-                f">>> MCP TOOL END: "
-                f"{elapsed:.3f}s"
-            )
-
-# ============================================================
-# MCP INITIALIZATION
-# ============================================================
-
-async def initialize_mcp():
-
-    global MCP_TOOLS
-    global MCP_AGENT
-
-    # Already initialized
-    if MCP_AGENT is not None:
-
-        print("MCP agent already initialized. Reusing it.")
-
-        return
-
-    print("\n============================================================")
-    print("INITIALIZING MCP")
-    print("============================================================")
-
-    # --------------------------------------------------------
-    # Load MCP tools
-    # --------------------------------------------------------
-
-    print("\nLoading MCP tools...")
-
-    start = time.perf_counter()
-
-    MCP_TOOLS = await MCP_CLIENT.get_tools()
-
-    end = time.perf_counter()
-
-    print(
-        f"MCP get_tools(): "
-        f"{end - start:.3f}s"
-    )
-
-    print("\nAVAILABLE TOOLS:")
-
-    for tool in MCP_TOOLS:
-        print(tool.name)
-
-    # --------------------------------------------------------
-    # Create Gemini model
-    # --------------------------------------------------------
-
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite"
-    )
-
-    # --------------------------------------------------------
-    # Create MCP agent ONCE
-    # --------------------------------------------------------
-
-    MCP_AGENT = create_agent(
-        model=llm,
-        tools=MCP_TOOLS,
-        system_prompt=MCP_SYSTEM_PROMPT
-    )
-
-    print("\nMCP agent initialized.")
-
-
-# ============================================================
-# NODE 1 — ADD USER MESSAGE
-# ============================================================
-
-def add_user_message(state: State):
-
-    return {
-        "messages": [
-            HumanMessage(
-                content=state["message"]
-            )
-        ]
-    }
-
-
-# ============================================================
-# NODE 2 — RAG + LLM #1 JUDGE
-# ============================================================
-
-async def rag_node(state: State):
-
-    question = state["message"]
-
-    print("\n")
-    print("=" * 60)
-    print("RAG RETRIEVAL")
-    print("=" * 60)
-
-    # --------------------------------------------------------
-    # Retrieve FAQ
-    # --------------------------------------------------------
-
-    start = time.perf_counter()
-
-    faq = retrieve_faq_for_router(question)
-
-    end = time.perf_counter()
-
-    print(
-        f"RAG retrieval time: "
-        f"{end - start:.3f}s"
-    )
-
-    print("\nRAG SCORE:")
-    print(faq["score"])
-
-    # --------------------------------------------------------
-    # Conversation history
-    # --------------------------------------------------------
-
-    messages = state.get(
-        "messages",
-        []
-    )
-
-    history_messages = messages[:-1]
-
-    history = []
-
-    for message in history_messages:
-
-        if isinstance(message, HumanMessage):
-
-            history.append(
-                f"User: {extract_text(message.content)}"
-            )
-
-        elif isinstance(message, AIMessage):
-
-            history.append(
-                f"Assistant: {extract_text(message.content)}"
-            )
-
-    history_text = "\n".join(history)
-
-    if not history_text:
-
-        history_text = "No previous conversation."
-
-    # --------------------------------------------------------
-    # LLM #1 prompt
-    # --------------------------------------------------------
-
-    judge_prompt = f"""
-Conversation history:
-
-{history_text}
-
-
-Current user query:
-
-{question}
-
-
-Retrieved FAQ question:
-
-{faq["faq_question"]}
-
-
-Retrieved FAQ answer:
-
-{faq["faq_answer"]}
-
-
-Retrieval score:
-
-{faq["score"]}
-
-
-Decide whether the retrieved FAQ actually answers
-the current user query.
-
-Return only:
+Return ONLY:
 
 RAG
 
@@ -480,240 +195,443 @@ or
 NOT_RAG
 """
 
-    # --------------------------------------------------------
-    # Create RAG judge model
-    # --------------------------------------------------------
 
-    judge_llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite"
-    )
 
-    # --------------------------------------------------------
-    # LLM #1
-    # --------------------------------------------------------
+# ============================================================
+# MCP SYSTEM PROMPT
+# ============================================================
+
+
+MCP_SYSTEM_PROMPT = """
+You are an e-commerce support assistant.
+
+You have access to MCP tools.
+
+IMPORTANT TOOL SELECTION RULES:
+
+1. ONLY call an MCP tool when the user's request requires
+   information or an action that that specific tool provides.
+
+2. DO NOT call unrelated tools.
+
+3. For a simple question that requires one tool, call ONLY
+   that one tool.
+
+4. Do NOT call multiple tools merely because they are available
+   or because their information might be useful in a general
+   support response.
+
+5. When the user asks about a specific order, use only the tool
+   required to answer the specific question.
+
+Examples:
+
+User:
+"What is the status of order ORD-1005-D?"
+
+Call ONLY:
+get_order_status
+
+Do NOT call:
+get_return_policy
+get_shipping_info
+get_payment_information
+
+
+User:
+"What is the return policy for order ORD-1005-D?"
+
+If the user is asking only for the general return policy,
+call ONLY:
+get_return_policy
+
+If the user is asking whether the specific order is eligible
+for a return, first obtain the required order information and
+then use the appropriate return-related tool if necessary.
+
+
+User:
+"What shipping information do you provide?"
+
+Call ONLY:
+get_shipping_info
+
+
+User:
+"What payment methods do you accept?"
+
+Call ONLY:
+get_payment_information
+
+
+6. Multiple tools should be called in the SAME assistant turn
+ONLY when the user explicitly asks for multiple independent
+pieces of information.
+
+Example:
+
+"What is the status of ORD-1005-D and what is your return policy?"
+
+Call:
+get_order_status
+get_return_policy
+
+7. If one tool's result is required to determine the arguments
+or decision for another tool, execute the dependent tool only
+after receiving the first tool's result.
+
+8. Never invent order IDs, customer IDs, tracking numbers,
+statuses, dates, or other information.
+
+9. If a required tool argument is missing, ask the user for
+that information.
+
+10. Use the actual results returned by the tools.
+
+11. Do not claim that an action was completed unless the
+corresponding MCP tool confirms it.
+
+12. After obtaining the information required to answer the
+user's question, provide a clear and concise final answer.
+
+13. Do not expose internal tool execution details to the user.
+
+IMPORTANT:
+The user's request determines which tool(s) are necessary.
+Do not call extra tools simply because they might provide
+additional information.
+"""
+
+
+
+# ============================================================
+# MCP TIMING CALLBACK
+# ============================================================
+
+class MCPTimingCallback(BaseCallbackHandler):
+
+    def __init__(self):
+        self.llm_start_time = None
+        self.tool_start_times = {}
+
+    def on_chat_model_start(self, serialized, messages, **kwargs):
+        self.llm_start_time = time.perf_counter()
+        print("\n>>> MCP AGENT LLM START")
+
+    def on_llm_end(self, response, **kwargs):
+        if self.llm_start_time is not None:
+            elapsed = time.perf_counter() - self.llm_start_time
+            print(f">>> MCP AGENT LLM END: {elapsed:.3f}s")
+            self.llm_start_time = None
+
+    def on_tool_start(self, serialized, input_str, **kwargs):
+        tool_name = serialized.get("name", "unknown_tool")
+        self.tool_start_times[tool_name] = time.perf_counter()
+        print(f"\n>>> MCP TOOL START: {tool_name}")
+
+    def on_tool_end(self, output, **kwargs):
+        tool_name = kwargs.get("name", "unknown_tool")
+
+        start_time = self.tool_start_times.get(tool_name)
+
+        if start_time is not None:
+            elapsed = time.perf_counter() - start_time
+            print(f">>> MCP TOOL END: {elapsed:.3f}s")
+            del self.tool_start_times[tool_name]
+
+
+# ============================================================
+# MCP INITIALIZATION
+# ============================================================
+
+async def initialize_mcp():
+
+    global MCP_TOOLS, MCP_LLM, MCP_TOOL_NODE
+
+    if MCP_TOOLS is not None:
+        return
+
+    print("\n" + "=" * 60)
+    print("INITIALIZING MCP")
+    print("=" * 60)
+
+    print("\nLoading MCP tools...")
 
     start = time.perf_counter()
 
-    judge_response = await judge_llm.ainvoke(
-        [
-            {
-                "role": "system",
-                "content": RAG_JUDGE_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": judge_prompt,
-            },
-        ]
+    MCP_TOOLS = await MCP_CLIENT.get_tools()
+
+    elapsed = time.perf_counter() - start
+
+    print(f"MCP get_tools(): {elapsed:.3f}s")
+
+    print("\nAVAILABLE TOOLS:")
+
+    for tool in MCP_TOOLS:
+        print(tool.name)
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.5-flash-lite"
     )
 
-    end = time.perf_counter()
+    MCP_LLM = llm.bind_tools(MCP_TOOLS)
 
-    print(
-        f"\nGemini RAG Judge call: "
-        f"{end - start:.3f}s"
-    )
+    MCP_TOOL_NODE = ToolNode(MCP_TOOLS)
 
-    decision = extract_text(
-        judge_response.content
-    ).strip().upper()
+    print("\nMCP manual LangGraph agent initialized.")
 
-    # --------------------------------------------------------
-    # RAG decision
-    # --------------------------------------------------------
 
-    if decision == "RAG":
+# ============================================================
+# ADD USER MESSAGE
+# ============================================================
 
-        print("\nLLM #1 DECISION: RAG")
-
-        return {
-            "route": "rag",
-            "response": faq["faq_answer"],
-            "messages": [
-                AIMessage(
-                    content=faq["faq_answer"]
-                )
-            ],
-        }
-
-    print("\nLLM #1 DECISION: NOT_RAG")
+async def add_message_node(state: State):
 
     return {
-        "route": "mcp"
+        "messages": [
+            HumanMessage(content=state["message"])
+        ]
     }
 
 
 # ============================================================
-# ROUTING AFTER RAG
+# RAG NODE
 # ============================================================
 
-def route_after_rag(state: State):
+async def rag_node(state: State):
 
-    return state["route"]
+    query = state["message"]
+
+    print("\n" + "=" * 60)
+    print("RAG RETRIEVAL")
+    print("=" * 60)
+
+    start = time.perf_counter()
+
+    faq_answer = retrieve_faq(query)
+
+    retrieval_time = time.perf_counter() - start
+
+    print(f"RAG retrieval time: {retrieval_time:.3f}s")
+
+    if faq_answer is None:
+        faq_answer = ""
+
+    judge_prompt = RAG_JUDGE_PROMPT.format(
+        query=query,
+        faq_answer=faq_answer
+    )
+
+    print("\nCalling Gemini RAG Judge...")
+
+    start = time.perf_counter()
+
+    judge_response = await MCP_LLM.ainvoke(judge_prompt)
+
+    judge_time = time.perf_counter() - start
+
+    print(f"Gemini RAG Judge: {judge_time:.3f}s")
+
+    decision = extract_text(judge_response).strip().upper()
+
+    if "RAG" in decision and "NOT_RAG" not in decision:
+
+        print("LLM DECISION: RAG")
+
+        return {
+            "route": "rag",
+            "response": faq_answer
+        }
+
+    print("LLM DECISION: NOT_RAG")
+
+    return {
+        "route": "mcp",
+        "response": ""
+    }
 
 
 # ============================================================
-# NODE 3 — MCP AGENT
+# MCP AGENT NODE
 # ============================================================
 
 async def mcp_agent_node(state: State):
 
-    print("\n============================================================")
-    print("MCP AGENT")
-    print("============================================================")
-
-    # Agent was initialized during application startup.
-    # This is only a safety check.
-    await initialize_mcp()
-
-    # --------------------------------------------------------
-    # Reuse existing MCP agent
-    # --------------------------------------------------------
-
-    start = time.perf_counter()
+    if MCP_LLM is None:
+        raise RuntimeError("MCP has not been initialized.")
 
     timing_callback = MCPTimingCallback()
 
-    result = await MCP_AGENT.ainvoke(
-        {
-            "messages": state["messages"]
-        },
+    start = time.perf_counter()
+
+    result = await MCP_LLM.ainvoke(
+        [
+            SystemMessage(content=MCP_SYSTEM_PROMPT),
+            *state["messages"]
+        ],
         config={
             "callbacks": [timing_callback]
         }
     )
 
-    end = time.perf_counter()
+    elapsed = time.perf_counter() - start
 
-    print(f"\nAgent ainvoke: {end - start:.3f}s")
-
-    
-
-    # --------------------------------------------------------
-    # Extract new messages
-    # --------------------------------------------------------
-
-    existing_messages = state["messages"]
-
-    new_messages = result["messages"][
-        len(existing_messages):
-    ]
-
-    for message in new_messages:
-
-        print("\n---")
-
-        print(
-            "TYPE:",
-            type(message).__name__
-        )
-
-        print(
-            "NAME:",
-            getattr(
-                message,
-                "name",
-                None
-            )
-        )
-
-        print(
-            "TOOL CALLS:",
-            getattr(
-                message,
-                "tool_calls",
-                None
-            )
-        )
-
-        print(
-            "CONTENT:",
-            message.content
-        )
-
-    # --------------------------------------------------------
-    # Final answer
-    # --------------------------------------------------------
-
-    final_message = result["messages"][-1]
-
-    answer = extract_text(
-        final_message.content
-    )
-
-    print("\nFINAL MCP ANSWER:")
-    print(answer)
+    print(f"\nMCP LLM node total: {elapsed:.3f}s")
 
     return {
-        "messages": new_messages,
-        "response": answer,
-        "route": "mcp"
+        "messages": [result]
     }
 
 
 # ============================================================
-# BUILD LANGGRAPH
+# MCP TOOL NODE
 # ============================================================
 
-graph_builder = StateGraph(State)
+async def mcp_tool_node(state: State):
+
+    if MCP_TOOL_NODE is None:
+        raise RuntimeError(
+            "MCP ToolNode has not been initialized."
+        )
+
+    last_message = state["messages"][-1]
+
+    print("\n" + "=" * 60)
+    print("MCP TOOL EXECUTION")
+    print("=" * 60)
+
+    if isinstance(last_message, AIMessage):
+
+        tool_calls = last_message.tool_calls
+
+        print(f"Tool calls requested: {len(tool_calls)}")
+
+        for call in tool_calls:
+            print(f"  → {call['name']}")
+
+    start = time.perf_counter()
+
+    result = await MCP_TOOL_NODE.ainvoke(state)
+
+    elapsed = time.perf_counter() - start
+
+    print(f"\nMCP ToolNode total: {elapsed:.3f}s")
+
+    return result
 
 
-graph_builder.add_node(
+# ============================================================
+# MCP FINAL RESPONSE NODE
+# ============================================================
+
+async def mcp_response_node(state: State):
+
+    if not state["messages"]:
+        return {
+            "response": ""
+        }
+
+    final_message = state["messages"][-1]
+
+    response = extract_text(final_message.content)
+
+    return {
+        "response": response
+    }
+
+
+# ============================================================
+# ROUTING
+# ============================================================
+
+def route_after_rag(state: State):
+
+    if state["route"] == "rag":
+        return "rag_end"
+
+    return "mcp_agent"
+
+
+# ============================================================
+# LANGGRAPH
+# ============================================================
+
+builder = StateGraph(State)
+
+builder.add_node(
     "add_message",
-    add_user_message
+    add_message_node
 )
 
-graph_builder.add_node(
+builder.add_node(
     "rag",
     rag_node
 )
 
-graph_builder.add_node(
+builder.add_node(
     "mcp_agent",
     mcp_agent_node
 )
 
+builder.add_node(
+    "mcp_tools",
+    mcp_tool_node
+)
 
-# ============================================================
-# GRAPH EDGES
-# ============================================================
+builder.add_node(
+    "mcp_response",
+    mcp_response_node
+)
 
-graph_builder.add_edge(
+
+builder.add_edge(
     START,
     "add_message"
 )
 
-graph_builder.add_edge(
+builder.add_edge(
     "add_message",
     "rag"
 )
 
-graph_builder.add_conditional_edges(
+
+builder.add_conditional_edges(
     "rag",
     route_after_rag,
     {
-        "rag": END,
-        "mcp": "mcp_agent",
+        "rag_end": END,
+        "mcp_agent": "mcp_agent"
     }
 )
 
-graph_builder.add_edge(
+
+builder.add_conditional_edges(
     "mcp_agent",
+    tools_condition,
+    {
+        "tools": "mcp_tools",
+        END: "mcp_response"
+    }
+)
+
+
+builder.add_edge(
+    "mcp_tools",
+    "mcp_agent"
+)
+
+builder.add_edge(
+    "mcp_response",
     END
 )
 
 
 # ============================================================
-# CHECKPOINTER
+# CHECKPOINTING
 # ============================================================
 
-checkpointer = InMemorySaver()
+memory = InMemorySaver()
 
-
-# ============================================================
-# COMPILE GRAPH
-# ============================================================
-
-graph = graph_builder.compile(
-    checkpointer=checkpointer
+graph = builder.compile(
+    checkpointer=memory
 )
