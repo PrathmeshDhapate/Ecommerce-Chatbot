@@ -93,42 +93,85 @@ def extract_text(content):
 # ============================================================
 
 RAG_JUDGE_PROMPT = """
-You are a judge for a commerce FAQ chatbot.
+You are a routing judge for a commerce FAQ chatbot.
 
-Your job is ONLY to decide whether the retrieved FAQ answer
-actually answers the user's current question.
+Your ONLY job is to decide whether the retrieved FAQ answer
+is sufficient to answer the user's current question.
 
-Consider:
-
-- the user's current query
-- the conversation history
-- the retrieved FAQ question
-- the retrieved FAQ answer
-
-Return exactly ONE label:
+You must choose exactly ONE label:
 
 RAG
 NOT_RAG
 
-Choose RAG when the FAQ directly answers the user's question.
+Use RAG when:
+- The user is asking for general information or a policy.
+- The retrieved FAQ directly answers the user's question.
+- The retrieved FAQ provides enough information to answer the question
+  without needing a live system or an MCP tool.
+- The question is about topics covered by the retrieved FAQ.
 
-Choose NOT_RAG when:
+Examples of questions that should usually be RAG:
+- "What is the return policy?"
+- "How long does shipping take?"
+- "What payment methods do you accept?"
+- "What is your warranty policy?"
+- "How do I track a package?" 
+  (when the FAQ provides general tracking instructions)
 
-- the FAQ is only related but does not answer the question
-- the FAQ answer is empty
-- the user is asking for a specific/live/order-related result
-- the user is asking to perform an action
-- the user asks something outside the FAQ
-- the user needs an MCP tool
+Use NOT_RAG when:
+- The user asks about a specific order, customer, package, or account.
+- The user needs live or real-time information.
+- The user wants to perform an action.
+- The user asks to cancel an order.
+- The user asks to process a return for a specific order.
+- The user asks for the current status/location of a specific package.
+- The retrieved FAQ does not actually answer the question.
+- The retrieved FAQ answer is empty.
+- The user asks something unrelated to the retrieved FAQ.
 
-Do not answer the user.
+IMPORTANT:
+Do NOT classify a question as NOT_RAG merely because it is about
+returns, shipping, payments, tracking, or another commerce topic.
+
+The key question is:
+
+"Can the retrieved FAQ answer the user's question directly,
+without calling an MCP tool?"
+
+If YES → RAG
+If NO → NOT_RAG
+
+Examples:
+
+User: "What is the return policy?"
+FAQ: "Most products can be returned within 30 days of delivery."
+→ RAG
+
+User: "Can I return order ORD-1005-D?"
+FAQ: "Most products can be returned within 30 days of delivery."
+→ NOT_RAG
+
+User: "How long does shipping take?"
+FAQ: "Orders usually arrive within 5–7 business days."
+→ RAG
+
+User: "Where is my order ORD-1005-D?"
+FAQ: "Orders usually arrive within 5–7 business days."
+→ NOT_RAG
+
+User: "Can you cancel order ORD-1005-D?"
+FAQ: "Most products can be returned within 30 days of delivery."
+→ NOT_RAG
+
+Do not answer the user's question.
 Do not explain your decision.
+Do not return JSON.
+Do not return a list.
+Do not return any additional text.
 
-Return only:
+Return exactly one of:
 
 RAG
-
-or
 
 NOT_RAG
 """
@@ -359,12 +402,6 @@ async def rag_node(state: State):
         f"{end - start:.3f}s"
     )
 
-    print("\nFAQ QUESTION:")
-    print(faq["faq_question"])
-
-    print("\nFAQ ANSWER:")
-    print(faq["faq_answer"])
-
     print("\nRAG SCORE:")
     print(faq["score"])
 
@@ -550,17 +587,7 @@ async def mcp_agent_node(state: State):
 
     print(f"\nAgent ainvoke: {end - start:.3f}s")
 
-    print("\nMCP AGENT MESSAGE TRACE:")
-
-    for i, message in enumerate(result["messages"]):
-        print(f"\nMESSAGE {i + 1}")
-        print("TYPE:", type(message).__name__)
-        print("NAME:", getattr(message, "name", None))
-        print("TOOL CALLS:", getattr(message, "tool_calls", None))
-
-        content = extract_text(message.content)
-
-        print("CONTENT:", content[:500])
+    
 
     # --------------------------------------------------------
     # Extract new messages

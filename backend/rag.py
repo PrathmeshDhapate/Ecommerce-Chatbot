@@ -105,7 +105,7 @@ def retrieve_faq(question: str):
 def retrieve_faq_for_router(question: str):
     results = vector_store.similarity_search_with_score(
         question,
-        k=1
+        k=2
     )
 
     if not results:
