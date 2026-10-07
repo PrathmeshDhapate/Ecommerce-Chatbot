@@ -47,6 +47,16 @@ NONE
 
 6. Preserve the meaning of the user's original request.
 
+7. NEVER invent, infer, or create a new question that was not
+explicitly asked by the user.
+
+8. Preserve the user's original wording and meaning as much as
+possible.
+
+9. If a part of the query is action-related or specific to an
+order/customer/account/package, keep it in REMAINING_PART exactly
+as part of the original request.
+
 USER QUERY:
 {query}
 """

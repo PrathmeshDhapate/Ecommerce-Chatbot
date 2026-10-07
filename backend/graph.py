@@ -283,6 +283,15 @@ after receiving the first tool's result.
 8. Never invent order IDs, customer IDs, tracking numbers,
 statuses, dates, or other information.
 
+IMPORTANT ID FORMATS:
+
+- Order IDs look like: ORD-1005-D
+- Customer IDs look like: CUST-1005
+- An order ID and customer ID are different values.
+- NEVER use an order ID as a customer ID.
+- If the customer ID is required but the user did not provide it,
+  ask the user for the customer ID.
+
 9. If a required tool argument is missing, ask the user for
 that information.
 
@@ -364,6 +373,20 @@ async def initialize_mcp():
     elapsed = time.perf_counter() - start
 
     print(f"MCP get_tools(): {elapsed:.3f}s")
+
+    MCP_TOOLS = await MCP_CLIENT.get_tools()
+
+    for tool in MCP_TOOLS:
+        if tool.name == "get_order_status":
+            print("\n" + "=" * 70)
+            print("FULL GET_ORDER_STATUS SCHEMA")
+            print("=" * 70)
+
+            print("\nARGS_SCHEMA:")
+            print(tool.args_schema)
+
+            print("\nTOOL INPUT SCHEMA:")
+            print(tool.get_input_schema().model_json_schema())
 
     print("\nAVAILABLE TOOLS:")
 
@@ -464,11 +487,21 @@ async def mcp_agent_node(state: State):
 
     start = time.perf_counter()
 
+    mcp_messages = [
+    SystemMessage(content=MCP_SYSTEM_PROMPT),
+    *state["messages"]
+    ]
+
+    print("\n" + "=" * 70)
+    print("MESSAGES SENT TO MCP LLM")
+    print("=" * 70)
+
+    for message in mcp_messages:
+        print(f"\n{type(message).__name__}:")
+        print(message.content)
+
     result = await MCP_LLM.ainvoke(
-        [
-            SystemMessage(content=MCP_SYSTEM_PROMPT),
-            *state["messages"]
-        ],
+        mcp_messages,
         config={
             "callbacks": [timing_callback]
         }
@@ -508,6 +541,7 @@ async def mcp_tool_node(state: State):
 
         for call in tool_calls:
             print(f"  → {call['name']}")
+            print(f"    Args: {call['args']}")
 
     start = time.perf_counter()
 
