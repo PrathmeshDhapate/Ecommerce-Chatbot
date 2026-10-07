@@ -1,34 +1,25 @@
-import json
-from pathlib import Path
 
-from dotenv import load_dotenv
+import time
+
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
+from dotenv import load_dotenv
+
+
+# ============================================================
+# EMBEDDINGS
+# ============================================================
 
 load_dotenv()
-
-
-# -------------------------
-# 1. Load FAQ data
-# -------------------------
-
-FAQ_FILE = Path(__file__).parent / "faq_data" / "faqs.json"
-
-with open(FAQ_FILE, "r", encoding="utf-8") as file:
-    faqs = json.load(file)
-
-
-# -------------------------
-# 2. Create embedding model
-# -------------------------
 
 embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-001"
 )
 
-# -------------------------
-# 3. Create Chroma vector store
-# -------------------------
+
+# ============================================================
+# CHROMA
+# ============================================================
 
 vector_store = Chroma(
     collection_name="faq_collection",
@@ -37,95 +28,100 @@ vector_store = Chroma(
 )
 
 
-# -------------------------
-# 4. Store FAQs
-# -------------------------
+# ============================================================
+# RAG THRESHOLD
+# ============================================================
 
-ids = [f"faq-{i}" for i in range(len(faqs))]
-
-existing = vector_store.get()["ids"]
-
-new_documents = []
-new_metadatas = []
-new_ids = []
-
-for faq, faq_id in zip(faqs, ids):
-
-    if faq_id not in existing:
-
-        new_documents.append(faq["question"])
-
-        new_metadatas.append({
-            "answer": faq["answer"]
-        })
-
-        new_ids.append(faq_id)
+RAG_THRESHOLD = 0.6
 
 
-if new_documents:
-    vector_store.add_texts(
-        texts=new_documents,
-        metadatas=new_metadatas,
-        ids=new_ids
-    )
+# ============================================================
+# RETRIEVE FAQ
+# ============================================================
 
+def retrieve_faq(query):
+    """
+    Retrieve relevant FAQ candidates for a query.
 
-# -------------------------
-# 5. Retrieve FAQ
-# -------------------------
+    Returns:
+        list of FAQ candidates
+        None if no sufficiently relevant FAQ is found
+    """
 
-def retrieve_faq(question: str):
-    results = vector_store.similarity_search_with_score(
-        question,
-        k=1
-    )
-
-    if not results:
-        print("RAG: No results")
-        return None
-
-    document, score = results[0]
+    print("\n" + "=" * 60)
+    print("RAG RETRIEVAL")
+    print("=" * 60)
 
     print("\nRAG QUERY:")
-    print(repr(question))
+    print(f"'{query}'")
 
-    print("RAG SCORE:")
-    print(score)
+    start = time.perf_counter()
 
-    print("RAG MATCH:")
-    print(document.page_content)
-
-    if score > 0.6:
-        print("RAG: Rejected")
-        return None
-
-    print("RAG: FAQ FOUND")
-    return document.metadata["answer"]
-
-def retrieve_faq_for_router(question: str):
     results = vector_store.similarity_search_with_score(
-        question,
-        k=1
+        query,
+        k=5
     )
 
+    elapsed = time.perf_counter() - start
+
     if not results:
-        return {
-            "faq_question": "",
-            "faq_answer": "",
-            "score": None
-        }
 
-    document, score = results[0]
+        print("RAG: No results found")
 
-    if score > 0.6:
-        return {
-            "faq_question": document.page_content,
-            "faq_answer": "",
-            "score": score
-        }
+        print(
+            f"RAG retrieval time: "
+            f"{elapsed:.3f}s"
+        )
 
-    return {
-        "faq_question": document.page_content,
-        "faq_answer": document.metadata["answer"],
-        "score": score
-    }
+        return None
+
+    faq_candidates = []
+
+    for document, score in results:
+
+        print("\n----------------------------------------")
+
+        print(
+            f"RAG SCORE:\n{score}"
+        )
+
+        print(
+            f"RAG MATCH:\n"
+            f"{document.page_content}"
+        )
+
+        if score <= RAG_THRESHOLD:
+
+            answer = document.metadata.get(
+                "answer",
+                ""
+            )
+
+            faq_candidates.append({
+                "question": document.page_content,
+                "answer": answer,
+                "score": score
+            })
+
+            print("RAG: Candidate accepted")
+
+        else:
+
+            print("RAG: Candidate rejected")
+
+    print("\n----------------------------------------")
+
+    print(
+        f"RAG candidates found: "
+        f"{len(faq_candidates)}"
+    )
+
+    print(
+        f"RAG retrieval time: "
+        f"{elapsed:.3f}s"
+    )
+
+    if not faq_candidates:
+        return None
+
+    return faq_candidates

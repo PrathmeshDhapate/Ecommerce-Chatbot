@@ -1,6 +1,7 @@
 
 import operator
 import time
+import json
 
 from typing import Annotated, TypedDict
 
@@ -50,6 +51,8 @@ class State(TypedDict):
     message: str
     route: str
     response: str
+    rag_answers: list[str]
+    mcp_query: str
 
 
 # ============================================================
@@ -87,112 +90,172 @@ def extract_text(content):
 RAG_JUDGE_PROMPT = """
 You are a routing judge for an e-commerce chatbot.
 
-Your job is to decide whether the user's question should be
-answered using the retrieved FAQ or sent to MCP tools.
+Your job is to analyze the user's question and determine which
+parts can be answered from the retrieved FAQ candidates and
+which parts require MCP tools.
+
+The user may ask one question or multiple independent questions.
 
 USER QUESTION:
 {query}
 
-RETRIEVED FAQ ANSWER:
-{faq_answer}
+RETRIEVED FAQ CANDIDATES:
 
-Return ONLY one of:
-
-RAG
-NOT_RAG
+{faq_candidates}
 
 
-========================
-CHOOSE RAG
-========================
+============================================================
+YOUR TASK
+============================================================
 
-Choose RAG when the user's question is a general/static
-information question AND the retrieved FAQ provides the
-information needed to answer it.
+For every part of the user's question:
 
-Examples:
+1. If it is a general/static information question and one of
+   the FAQ candidates provides the required information,
+   assign that part to RAG.
 
-User question:
-"How long does shipping take?"
+2. If it requires specific, live, order-related, customer-related,
+   package-related, account-related, or action-related information,
+   assign that part to MCP.
 
-Retrieved FAQ:
-"Shipping takes 5–7 business days."
+3. A single user question may contain BOTH RAG and MCP parts.
 
-Decision:
-RAG
+4. Do not assign a question to MCP merely because an MCP tool
+   exists for similar information. Use RAG when the FAQ candidate
+   clearly provides the required general/static information.
+
+5. Only select FAQ candidates that actually answer a part of
+   the user's question.
+
+6. If multiple FAQ candidates answer different parts of the
+   question, select all relevant candidates.
+
+7. If MCP is needed, create mcp_query containing ONLY the
+   MCP-relevant part of the user's question.
+
+   IMPORTANT:
+   - Preserve the user's original wording as much as possible.
+   - DO NOT remove, rewrite, summarize, or alter information
+     that may be required by an MCP tool.
+   - This includes order IDs, customer IDs, tracking numbers,
+     product names, dates, account information, and any other
+     identifiers or arguments mentioned by the user.
+   - If a customer ID is mentioned anywhere in the user's
+     question, it MUST be included in mcp_query when MCP is
+     being used.
+   - If an order ID is mentioned, preserve it exactly.
+   - Do not invent any missing information.
+
+8. mcp_query must be a faithful subset of the original user
+   question, not a summary or rewritten version.
+
+   Example:
+
+   USER QUESTION:
+   "What is the return policy and what is the status of
+   order ORD-1005-D? My customer ID is cust005."
+
+   CORRECT mcp_query:
+   "What is the status of order ORD-1005-D? My customer ID is cust005."
+
+   INCORRECT mcp_query:
+   "What is the status of order ORD-1005-D?"
+
+   The incorrect version is NOT allowed because it removes
+   the customer ID.
+
+9. If MCP is not needed, mcp_query must be an empty string.
+
+10. If RAG is not needed, rag_indices must be an empty list.
 
 
-User question:
+============================================================
+EXAMPLES
+============================================================
+
+Example 1:
+
+USER QUESTION:
 "What is your return policy?"
 
-Retrieved FAQ:
-"Most products can be returned within 30 days of delivery."
+FAQ CANDIDATES:
+[0] Return policy: Most products can be returned within 30 days.
+[1] Shipping takes 5–7 business days.
 
-Decision:
-RAG
-
-
-User question:
-"What payment methods do you accept?"
-
-Retrieved FAQ:
-"We accept cards, debit cards, and online payments."
-
-Decision:
-RAG
+OUTPUT:
+{{"rag_indices":[0],"mcp_query":""}}
 
 
-========================
-CHOOSE NOT_RAG
-========================
+Example 2:
 
-Choose NOT_RAG when the question requires specific,
-live, account-related, order-related, package-related,
-or action-related information.
+USER QUESTION:
+"What is your return policy and how long does shipping take?"
 
-Examples:
+FAQ CANDIDATES:
+[0] Shipping takes 5–7 business days.
+[1] How long should I expect shipping to take?
+[2] Most products can be returned within 30 days.
 
-"What is the status of ORD-1005-D?"
-→ NOT_RAG
-
-"Where is my package?"
-→ NOT_RAG
-
-"Track order ORD-1005-D."
-→ NOT_RAG
-
-"Cancel order ORD-1005-D."
-→ NOT_RAG
-
-"Process a return for ORD-1005-D."
-→ NOT_RAG
+OUTPUT:
+{{"rag_indices":[0,2],"mcp_query":""}}
 
 
-========================
-IMPORTANT
-========================
+Example 3:
 
-Do NOT choose NOT_RAG merely because an MCP tool exists
-that could provide similar information.
+USER QUESTION:
+"What is your return policy and what is the status of order ORD-1005-D?"
 
-If the user's question is general/static and the retrieved
-FAQ contains the answer, choose RAG.
+FAQ CANDIDATES:
+[0] Shipping takes 5–7 business days.
+[1] How long should I expect shipping to take?
+[2] Most products can be returned within 30 days.
 
-The retrieved FAQ does not need to have exactly the same
-wording as the question. Semantic equivalence is sufficient.
+OUTPUT:
+{{"rag_indices":[2],"mcp_query":"What is the status of order ORD-1005-D?"}}
 
-However, if the question requires information about a
-specific order, customer, package, account, or live status,
-choose NOT_RAG even if the retrieved FAQ is semantically
-similar.
 
-Return ONLY:
+Example 4:
 
-RAG
+USER QUESTION:
+"How long does shipping take and what is the status of order ORD-1005-D?"
 
-or
+FAQ CANDIDATES:
+[0] Shipping takes 5–7 business days.
+[1] How long should I expect shipping to take?
+[2] Most products can be returned within 30 days.
 
-NOT_RAG
+OUTPUT:
+{{"rag_indices":[0,1],"mcp_query":"What is the status of order ORD-1005-D?"}}
+
+
+Example 5:
+
+USER QUESTION:
+"What is the status of order ORD-1005-D?"
+
+FAQ CANDIDATES:
+[0] Shipping takes 5–7 business days.
+[1] Return policy: Most products can be returned within 30 days.
+
+OUTPUT:
+{{"rag_indices":[],"mcp_query":"What is the status of order ORD-1005-D?"}}
+
+
+============================================================
+OUTPUT FORMAT
+============================================================
+
+Return ONLY valid JSON.
+
+The JSON must contain exactly these two fields:
+
+{{
+  "rag_indices": [integer indices],
+  "mcp_query": "string"
+}}
+
+Do not include markdown.
+Do not include explanations.
 """
 
 
@@ -431,18 +494,28 @@ async def rag_node(state: State):
 
     start = time.perf_counter()
 
-    faq_answer = retrieve_faq(query)
+    faq_candidates = retrieve_faq(query)
 
     retrieval_time = time.perf_counter() - start
 
     print(f"RAG retrieval time: {retrieval_time:.3f}s")
 
-    if faq_answer is None:
-        faq_answer = ""
+    if faq_candidates is None:
+        faq_candidates = []
+
+    faq_candidates_text = "\n\n".join(
+        f"[{i}] Question: {candidate['question']}\n"
+        f"Answer: {candidate['answer']}\n"
+        f"Score: {candidate['score']}"
+        for i, candidate in enumerate(faq_candidates)
+    )
+
+    if not faq_candidates_text:
+        faq_candidates_text = "No relevant FAQ candidates found."
 
     judge_prompt = RAG_JUDGE_PROMPT.format(
         query=query,
-        faq_answer=faq_answer
+        faq_candidates=faq_candidates_text
     )
 
     print("\nCalling Gemini RAG Judge...")
@@ -455,24 +528,72 @@ async def rag_node(state: State):
 
     print(f"Gemini RAG Judge: {judge_time:.3f}s")
 
-    decision = extract_text(judge_response).strip().upper()
+    decision_text = extract_text(judge_response.content).strip()
 
-    if "RAG" in decision and "NOT_RAG" not in decision:
+    print("\nRAG JUDGE DECISION:")
+    print(decision_text)
 
-        print("LLM DECISION: RAG")
+    try:
+        decision = json.loads(decision_text)
+    except json.JSONDecodeError:
+        print("ERROR: Invalid JSON returned by RAG judge.")
+
+        return {
+            "route": "mcp",
+            "response": "",
+            "rag_answers": [],
+            "mcp_query": query
+        }
+
+    rag_indices = decision.get("rag_indices", [])
+    mcp_query = decision.get("mcp_query", "").strip()
+
+    rag_answers = []
+
+    for index in rag_indices:
+
+        if isinstance(index, int) and 0 <= index < len(faq_candidates):
+
+            answer = faq_candidates[index]["answer"]
+
+            if answer:
+                rag_answers.append(answer)
+
+    print("\nSELECTED RAG ANSWERS:")
+
+    for answer in rag_answers:
+        print(f"→ {answer}")
+
+    print(f"\nMCP QUERY: {mcp_query}")
+
+    if rag_answers and mcp_query:
+        route = "rag_mcp"
+
+    elif rag_answers:
+        route = "rag"
+
+    else:
+        route = "mcp"
+
+    print(f"ROUTE: {route}")
+
+    if route == "rag":
+
+        combined_response = "\n\n".join(rag_answers)
 
         return {
             "route": "rag",
-            "response": faq_answer
+            "response": combined_response,
+            "rag_answers": rag_answers,
+            "mcp_query": ""
         }
 
-    print("LLM DECISION: NOT_RAG")
-
     return {
-        "route": "mcp",
-        "response": ""
+        "route": route,
+        "response": "",
+        "rag_answers": rag_answers,
+        "mcp_query": mcp_query
     }
-
 
 # ============================================================
 # MCP AGENT NODE
@@ -487,10 +608,47 @@ async def mcp_agent_node(state: State):
 
     start = time.perf_counter()
 
-    mcp_messages = [
-    SystemMessage(content=MCP_SYSTEM_PROMPT),
-    *state["messages"]
-    ]
+    # Find the latest MCP AI message and ToolMessage.
+    # We do not send the entire LangGraph conversation history.
+    messages = state["messages"]
+
+    latest_tool_index = None
+
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].__class__.__name__ == "ToolMessage":
+            latest_tool_index = i
+            break
+
+    if latest_tool_index is None:
+        # First MCP call: send only the MCP-specific query.
+        mcp_messages = [
+            SystemMessage(content=MCP_SYSTEM_PROMPT),
+            HumanMessage(
+                content=state["mcp_query"] or state["message"]
+            )
+        ]
+
+    else:
+        # MCP follow-up: send only the MCP query,
+        # the AI tool request, and the latest tool result.
+        ai_message = None
+
+        for i in range(latest_tool_index - 1, -1, -1):
+            if isinstance(messages[i], AIMessage):
+                ai_message = messages[i]
+                break
+
+        mcp_messages = [
+            SystemMessage(content=MCP_SYSTEM_PROMPT),
+            HumanMessage(
+                content=state["mcp_query"] or state["message"]
+            )
+        ]
+
+        if ai_message is not None:
+            mcp_messages.append(ai_message)
+
+        mcp_messages.append(messages[latest_tool_index])
 
     print("\n" + "=" * 70)
     print("MESSAGES SENT TO MCP LLM")
@@ -513,6 +671,33 @@ async def mcp_agent_node(state: State):
 
     return {
         "messages": [result]
+    }
+
+
+def validate_tool_calls(state: State):
+
+    last_message = state["messages"][-1]
+
+    if not isinstance(last_message, AIMessage):
+        return "mcp_tools"
+
+    for call in last_message.tool_calls:
+
+        if call["name"] == "get_order_status":
+
+            args = call.get("args", {})
+
+            if not args.get("customer_id"):
+                print("\n❌ BLOCKED: customer_id is missing")
+
+                return "blocked"
+
+    return "mcp_tools"
+
+async def blocked_node(state: State):
+
+    return {
+            "response": "Please provide your customer ID so I can check the status of your order."
     }
 
 
@@ -567,11 +752,26 @@ async def mcp_response_node(state: State):
 
     final_message = state["messages"][-1]
 
-    response = extract_text(final_message.content)
+    mcp_response = extract_text(final_message.content)
+
+    # If the query required both RAG and MCP,
+    # combine the answers directly without another LLM call.
+    if state["route"] == "rag_mcp":
+
+        rag_response = "\n".join(
+            answer for answer in state["rag_answers"]
+            if answer
+        )
+
+        if rag_response:
+            return {
+                "response": f"{rag_response}\n\n{mcp_response}"
+            }
 
     return {
-        "response": response
+        "response": mcp_response
     }
+
 
 
 # ============================================================
@@ -643,10 +843,24 @@ builder.add_conditional_edges(
     "mcp_agent",
     tools_condition,
     {
-        "tools": "mcp_tools",
+        "tools": "validate_tools",
         END: "mcp_response"
     }
 )
+
+builder.add_node("validate_tools", lambda state: state)
+
+builder.add_conditional_edges(
+    "validate_tools",
+    validate_tool_calls,
+    {
+        "mcp_tools": "mcp_tools",
+        "blocked": "blocked"
+    }
+)
+
+builder.add_node("blocked", blocked_node)
+builder.add_edge("blocked", END)
 
 
 builder.add_edge(
