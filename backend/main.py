@@ -118,7 +118,7 @@ async def chat(request: ChatRequest):
             "message": request.message,
             "route": "",
             "response": "",
-            "messages": []
+            "messages": [],
         },
         config={
             "configurable": {
