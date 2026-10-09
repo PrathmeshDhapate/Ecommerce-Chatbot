@@ -2,6 +2,7 @@
 import operator
 import time
 import json
+import re
 
 from typing import Annotated, TypedDict
 
@@ -758,6 +759,9 @@ async def mcp_agent_node(state: State):
         # First MCP call: send the MCP query and any RAG answer.
         mcp_query = state["mcp_query"] or state["message"]
 
+        print("STATE RAG ANSWERS:", state.get("rag_answers"))
+        print("STATE MCP QUERY:", state.get("mcp_query"))
+
         rag_context = "\n".join(
             answer for answer in state.get("rag_answers", [])
             if answer
@@ -788,12 +792,25 @@ async def mcp_agent_node(state: State):
                 ai_message = messages[i]
                 break
 
+        rag_context = "\n".join(
+            answer for answer in state.get("rag_answers", [])
+            if answer
+        )
+
+        user_content = state["mcp_query"] or state["message"]
+
+        if rag_context:
+            user_content = (
+                f"RAG ANSWER ALREADY AVAILABLE:\n{rag_context}\n\n"
+                f"Answer the user's request using the RAG answer "
+                f"and the MCP tool result.\n\n"
+                f"{user_content}"
+            )
+
         mcp_messages = [
             SystemMessage(content=MCP_SYSTEM_PROMPT),
-            HumanMessage(
-                content=state["mcp_query"] or state["message"]
-            )
-        ]
+            HumanMessage(content=user_content)
+        ]  
 
         if ai_message is not None:
             mcp_messages.append(ai_message)
@@ -823,27 +840,49 @@ async def mcp_agent_node(state: State):
         "messages": [result]
     }
 
-
 def validate_tool_calls(state: State):
-
     last_message = state["messages"][-1]
 
     if not isinstance(last_message, AIMessage):
         return "mcp_tools"
 
+    customer_id_tools = {
+        "get_order_status",
+        "track_package",
+    }
+
+    user_text = " ".join(
+        msg.content
+        for msg in state["messages"]
+        if isinstance(msg, HumanMessage)
+        and isinstance(msg.content, str)
+    )
+
+    supplied_customer_ids = {
+        cid.casefold()
+        for cid in re.findall(
+            r"\bCUST-?[A-Za-z0-9-]+\b",
+            user_text,
+            flags=re.IGNORECASE,
+        )
+    }
+
     for call in last_message.tool_calls:
-
-        if call["name"] == "get_order_status":
-
+        if call["name"] in customer_id_tools:
             args = call.get("args", {})
+            customer_id = args.get("customer_id", "")
 
-            if not args.get("customer_id"):
-                print("\n❌ BLOCKED: customer_id is missing")
-
+            if (
+                not isinstance(customer_id, str)
+                or customer_id.casefold() not in supplied_customer_ids
+            ):
+                print(
+                    f"\n❌ BLOCKED: customer_id was not "
+                    f"provided by the user for {call['name']}"
+                )
                 return "blocked"
 
     return "mcp_tools"
-
 
 
 
@@ -907,6 +946,7 @@ async def mcp_tool_node(state: State):
 
 
 
+
 async def mcp_response_node(state: State):
     if not state["messages"]:
         return {
@@ -920,16 +960,29 @@ async def mcp_response_node(state: State):
     final_message = state["messages"][-1]
     mcp_response = extract_text(final_message.content)
 
+    # Include previous pending answers and current RAG answers.
     rag_answers = (
         state.get("pending_rag_answers", [])
-        if state.get("pending_task", False)
-        else []
+        + state.get("rag_answers", [])
     )
 
-    combined_parts = list(rag_answers)
+    # Remove duplicate answers while preserving their order.
+    rag_answers = list(dict.fromkeys(
+        answer.strip()
+        for answer in rag_answers
+        if answer and answer.strip()
+    ))
 
-    if mcp_response:
-        combined_parts.append(mcp_response)
+    # ADD THESE PRINTS HERE
+    print("DEBUG pending_rag_answers:", state.get("pending_rag_answers", []))
+    print("DEBUG rag_answers:", state.get("rag_answers", []))
+    print("DEBUG mcp_response:", repr(mcp_response))
+    
+    
+    if mcp_response and mcp_response.strip():
+        combined_parts = [mcp_response.strip()]
+    else:
+        combined_parts = rag_answers.copy()
 
     return {
         "response": "\n\n".join(combined_parts),
