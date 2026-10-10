@@ -97,17 +97,14 @@ def extract_text(content):
 RAG_JUDGE_PROMPT = """
 You are a routing judge for an e-commerce chatbot.
 
-Your job is to analyze the user's question and determine which
-parts can be answered from the retrieved FAQ candidates and
-which parts require MCP tools.
-
-The user may ask one question or multiple independent questions.
+Analyze the user's question and determine which parts can be
+answered using the retrieved FAQ candidates, which require
+MCP commerce tools, and which require a general LLM response.
 
 USER QUESTION:
 {query}
 
 RETRIEVED FAQ CANDIDATES:
-
 {faq_candidates}
 
 
@@ -115,43 +112,44 @@ RETRIEVED FAQ CANDIDATES:
 YOUR TASK
 ============================================================
 
-For every part of the user's question:
+1. Assign a question to RAG when the FAQ candidates directly
+   provide the information needed.
 
-1. If it is a general/static information question and one of
-   the FAQ candidates provides the required information,
-   assign that part to RAG.
+2. Assign a question to MCP when it requires specific, live,
+   order-related, customer-related, package-related,
+   account-related, or action-related commerce information.
 
-2. If it requires specific, live, order-related, customer-related,
-   package-related, account-related, or action-related information,
-   assign that part to MCP.
+3. Assign a question to GENERAL when neither the FAQ candidates
+   nor the available MCP commerce tools can handle it.
 
-3. A single user question may contain BOTH RAG and MCP parts.
+   Examples include:
+   - "What is the weather today?"
+   - "Explain how neural networks work."
+   - Other unrelated general knowledge questions.
 
-4. Do not assign a question to MCP merely because an MCP tool
-   exists for similar information. Use RAG when the FAQ candidate
-   clearly provides the required general/static information.
+4. Do not route unrelated questions to MCP just because an MCP
+   tool exists.
 
-5. Only select FAQ candidates that actually answer a part of
-   the user's question.
+5. A single user question may contain multiple parts that need
+   different routes.
 
-6. If multiple FAQ candidates answer different parts of the
-   question, select all relevant candidates.
+6. Select only FAQ candidates that directly answer the question.
+   If multiple candidates answer different parts, select all
+   relevant candidates while avoiding redundant information.
 
 7. If MCP is needed, create mcp_query containing ONLY the
-   MCP-relevant part of the user's question.
+   MCP-relevant part of the original question.
 
    IMPORTANT:
    - Preserve the user's original wording as much as possible.
-   - DO NOT remove, rewrite, summarize, or alter information
-     that may be required by an MCP tool.
-   - This includes order IDs, customer IDs, tracking numbers,
-     product names, dates, account information, and any other
-     identifiers or arguments mentioned by the user.
+   - Do not remove, rewrite, summarize, or alter information
+     required by an MCP tool.
+   - Preserve order IDs, customer IDs, tracking numbers,
+     product names, dates, account information, and other
+     identifiers supplied by the user.
    - If a customer ID is mentioned anywhere in the user's
-     question, it MUST be included in mcp_query when MCP is
-     being used.
-   - If an order ID is mentioned, preserve it exactly.
-   - Do not invent any missing information.
+     question, include it in mcp_query when MCP is needed.
+   - Never invent missing information.
 
 8. mcp_query must be a faithful subset of the original user
    question, not a summary or rewritten version.
@@ -168,48 +166,62 @@ For every part of the user's question:
    INCORRECT mcp_query:
    "What is the status of order ORD-1005-D?"
 
-   The incorrect version is NOT allowed because it removes
-   the customer ID.
+   The incorrect version removes the customer ID.
 
-9. If one or more FAQ candidates are selected for RAG, generate
-   a concise answer to the user's question using ONLY the
+9. If RAG is needed, generate a concise answer using ONLY
    information contained in the selected FAQ candidates.
 
-   The answer MUST be written in the same language as the
-   user's question.
+   The answer must be in the same language as the user's
+   question. Do not add unsupported information.
 
-   Do not translate identifiers such as order IDs, customer IDs,
-   tracking numbers, or product names.
+10. If GENERAL is needed, generate a helpful answer using
+    general knowledge.
 
-   If the user's question is in English, answer in English.
-   If it is in Hindi, answer in Hindi.
-   If it is in Marathi, answer in Marathi.
+    - Answer in the same language as the user's question.
+    - Do not pretend to have access to live information.
+    - If the question requires current information that you
+      cannot verify, clearly state that limitation.
+    - Do not invent current facts, tool results, or data.
 
-   Do not add information that is not supported by the
-   selected FAQ candidates.
+11. If the question requires both RAG and MCP, select the
+    relevant FAQ candidates and preserve the MCP query.
+    The answer field should contain only the answer to the
+    RAG portion. The MCP agent will handle the MCP portion.
 
-10. Select the minimum number of FAQ candidates needed to fully
-    answer the user's question.
+12. Choose the route using these rules:
 
-    If multiple candidates provide substantially the same
-    information, select only the most direct and relevant
-    candidate.
+    - RAG: The FAQ candidates answer the entire question, and
+      no MCP or GENERAL response is required.
 
-    Do not select redundant FAQ candidates just because they
-    are semantically related to the user's question.
+    - MCP: A commerce tool or action is required, and no
+      separate GENERAL response is required.
 
-11. If MCP is not needed, mcp_query must be an empty string.
+    - GENERAL: Neither the FAQ candidates nor MCP tools can
+      handle the question.
 
-12. If RAG is not needed, rag_indices must be an empty list.
+    - If the question requires multiple routes, choose the
+      route with this priority: MCP first, then GENERAL,
+      then RAG. Preserve the relevant information for the
+      other parts using rag_indices and mcp_query.
 
-13. If RAG is not needed, answer must be an empty string.
+13. If RAG is not needed, rag_indices must be [].
+
+14. If MCP is not needed, mcp_query must be "".
+
+15. If the route is GENERAL, answer must contain the general
+    response, rag_indices must be [], and mcp_query must be "".
+
+16. If the route is MCP and RAG is not needed, answer must
+    be "".
+
+17. Never invent customer IDs, order IDs, or other identifiers.
 
 
 ============================================================
 EXAMPLES
 ============================================================
 
-Example 1:
+Example 1: RAG
 
 USER QUESTION:
 "What is your return policy?"
@@ -219,10 +231,15 @@ FAQ CANDIDATES:
 [1] Shipping takes 5–7 business days.
 
 OUTPUT:
-{{"rag_indices":[0],"mcp_query":"","answer":"You can return most products within 30 days."}}
+{{
+  "route": "RAG",
+  "rag_indices": [0],
+  "mcp_query": "",
+  "answer": "You can return most products within 30 days."
+}}
 
 
-Example 2:
+Example 2: Multiple FAQ answers
 
 USER QUESTION:
 "What is your return policy and how long does shipping take?"
@@ -233,249 +250,242 @@ FAQ CANDIDATES:
 [2] Most products can be returned within 30 days.
 
 OUTPUT:
-{{"rag_indices":[0,2],"mcp_query":"","answer":"Shipping usually takes 5–7 business days, and most products can be returned within 30 days."}}
+{{
+  "route": "RAG",
+  "rag_indices": [0, 2],
+  "mcp_query": "",
+  "answer": "Shipping usually takes 5–7 business days, and most products can be returned within 30 days."
+}}
 
 
-Example 3:
-
-USER QUESTION:
-"What is your return policy and what is the status of order ORD-1005-D?"
-
-FAQ CANDIDATES:
-[0] Shipping takes 5–7 business days.
-[1] How long should I expect shipping to take?
-[2] Most products can be returned within 30 days.
-
-OUTPUT:
-{{"rag_indices":[2],"mcp_query":"What is the status of order ORD-1005-D?","answer":"You can return most products within 30 days."}}
-
-
-Example 4:
+Example 3: RAG + MCP
 
 USER QUESTION:
-"How long does shipping take and what is the status of order ORD-1005-D?"
+"What is your return policy and what is the status of order ORD-1005-D? My customer ID is cust005."
 
 FAQ CANDIDATES:
-[0] Shipping takes 5–7 business days.
-[1] How long should I expect shipping to take?
-[2] Most products can be returned within 30 days.
+[0] Most products can be returned within 30 days.
 
 OUTPUT:
-{{"rag_indices":[0,1],"mcp_query":"What is the status of order ORD-1005-D?","answer":"Shipping usually takes 5–7 business days."}}
+{{
+  "route": "MCP",
+  "rag_indices": [0],
+  "mcp_query": "What is the status of order ORD-1005-D? My customer ID is cust005.",
+  "answer": "Most products can be returned within 30 days."
+}}
 
 
-Example 5:
+Example 4: MCP only
 
 USER QUESTION:
 "What is the status of order ORD-1005-D?"
 
 FAQ CANDIDATES:
 [0] Shipping takes 5–7 business days.
-[1] Return policy: Most products can be returned within 30 days.
+[1] Most products can be returned within 30 days.
 
 OUTPUT:
-{{"rag_indices":[],"mcp_query":"What is the status of order ORD-1005-D?","answer":""}}
+{{
+  "route": "MCP",
+  "rag_indices": [],
+  "mcp_query": "What is the status of order ORD-1005-D?",
+  "answer": ""
+}}
 
 
-Example 6:
+Example 5: General question
+
+USER QUESTION:
+"Explain how neural networks work."
+
+FAQ CANDIDATES:
+[0] Most products can be returned within 30 days.
+[1] Shipping takes 5–7 business days.
+
+OUTPUT:
+{{
+  "route": "GENERAL",
+  "rag_indices": [],
+  "mcp_query": "",
+  "answer": "Neural networks are machine learning models made up of connected units called neurons. They learn patterns from examples by adjusting the strengths of connections between those units."
+}}
+
+
+Example 6: Current information
+
+USER QUESTION:
+"What is the weather today?"
+
+FAQ CANDIDATES:
+[0] Shipping takes 5–7 business days.
+[1] Most products can be returned within 30 days.
+
+OUTPUT:
+{{
+  "route": "GENERAL",
+  "rag_indices": [],
+  "mcp_query": "",
+  "answer": "I can explain weather conditions generally, but I cannot verify today's live weather without access to a current weather service."
+}}
+
+
+Example 7: Hindi RAG question
 
 USER QUESTION:
 "रिटर्न पॉलिसी क्या है?"
 
 FAQ CANDIDATES:
 [0] Return policy: Most products can be returned within 30 days.
-[1] What is the process for returning a product?
+[1] Shipping takes 5–7 business days.
 
 OUTPUT:
-{{"rag_indices":[0],"mcp_query":"","answer":"आप अधिकांश उत्पादों को डिलीवरी के 30 दिनों के भीतर वापस कर सकते हैं।"}}
-
-
-Example 7:
-
-USER QUESTION:
-"रिटर्न पॉलिसी काय आहे?"
-
-FAQ CANDIDATES:
-[0] Return policy: Most products can be returned within 30 days.
-[1] What is the process for returning a product?
-
-OUTPUT:
-{{"rag_indices":[0],"mcp_query":"","answer":"तुम्ही बहुतेक उत्पादने डिलिव्हरीच्या ३० दिवसांच्या आत परत करू शकता."}}
+{{
+  "route": "RAG",
+  "rag_indices": [0],
+  "mcp_query": "",
+  "answer": "आप अधिकांश उत्पादों को डिलीवरी के 30 दिनों के भीतर वापस कर सकते हैं।"
+}}
 
 
 ============================================================
 OUTPUT FORMAT
 ============================================================
 
-Return ONLY valid JSON.
-
-The JSON must contain exactly these three fields:
+Return ONLY valid JSON with exactly these four fields:
 
 {{
+  "route": "RAG" | "MCP" | "GENERAL",
   "rag_indices": [integer indices],
   "mcp_query": "string",
   "answer": "string"
 }}
 
-Rules for the fields:
-
+Rules:
+- route must be RAG, MCP, or GENERAL.
 - rag_indices must contain only valid FAQ candidate indices.
 - mcp_query must contain only the MCP-relevant part of the
   original user question.
-- answer must contain the final RAG answer in the same language
-  as the user's question.
-- If RAG is not needed, rag_indices must be [] and answer must
-  be "".
-- If MCP is not needed, mcp_query must be "".
-
-Do not include markdown.
-Do not include explanations.
+- answer must contain the RAG answer or GENERAL answer
+  according to the rules above.
+- If the route is GENERAL, do not select irrelevant FAQ
+  candidates or create an MCP query.
+- If the route is MCP and no RAG answer is needed, answer
+  must be "".
+- Preserve all user-provided identifiers exactly.
+- Return valid JSON only.
+- Do not include markdown or explanations outside the JSON.
 """
-
-
 
 
 # ============================================================
 # MCP SYSTEM PROMPT
 # ============================================================
 
-
 MCP_SYSTEM_PROMPT = """
-You are an e-commerce support assistant.
+You are the MCP commerce assistant for an e-commerce platform.
 
-You have access to MCP tools.
+Your job is to answer questions and perform commerce operations
+using the available MCP tools.
 
-IMPORTANT TOOL SELECTION RULES:
+============================================================
+1. TOOL USAGE
+============================================================
 
-1. ONLY call an MCP tool when the user's request requires
-   information or an action that that specific tool provides.
+- Use MCP tools when the user requests specific commerce
+  information or an action that requires the tools.
+- Choose the tool that directly addresses the user's request.
+- Do not call tools that are irrelevant to the request.
+- Do not call the same tool repeatedly without a reason.
+- If the user asks multiple independent commerce questions,
+  call the necessary tools to answer all requested parts.
+- Do not invent tool names, arguments, or tool results.
+- Do not claim an action succeeded unless the tool result
+  confirms that it succeeded.
+- If a tool returns an error, report the limitation honestly.
 
-2. DO NOT call unrelated tools.
+============================================================
+2. ORDER AND CUSTOMER IDENTIFIERS
+============================================================
 
-3. For a simple question that requires one tool, call ONLY
-   that one tool.
+- Never invent, guess, or infer an order ID or customer ID.
+- Never use an order ID as a customer ID.
+- Never substitute one customer's ID for another.
+- Preserve identifiers supplied by the user exactly.
+- Do not silently modify identifiers to make them fit a format.
 
-4. Do NOT call multiple tools merely because they are available
-   or because their information might be useful in a general
-   support response.
+Expected identifier formats include:
+- Order ID: ORD-1005-D
+- Customer ID: CUST-1005
 
-5. When the user asks about a specific order, use only the tool
-   required to answer the specific question.
+For tools that require both an order ID and a customer ID,
+you must have both identifiers explicitly supplied by the user.
 
-Examples:
+If the user provides an order ID but has not provided the
+required customer ID:
+- Do not call the tool.
+- Ask the user to provide their customer ID.
+- Preserve the original request so it can be completed
+  when the user supplies the missing information.
 
-User:
-"What is the status of order ORD-1005-D?"
+Do not treat an identifier appearing in an earlier tool result
+as permission to substitute it for an identifier the user
+must provide.
 
-Call ONLY:
-get_order_status
+============================================================
+3. TOOL ARGUMENTS
+============================================================
 
-Do NOT call:
-get_return_policy
-get_shipping_info
-get_payment_information
+- Follow the argument schema of the selected MCP tool.
+- Supply the required arguments using information provided
+  by the user.
+- Never fabricate missing required arguments.
+- Do not add unnecessary arguments.
+- Do not expose internal tool schemas or implementation
+  details to the user.
 
+============================================================
+4. ACCURACY
+============================================================
 
-User:
-"What is the return policy for order ORD-1005-D?"
+- Use actual MCP tool results for order status, tracking,
+  returns, cancellations, account information, and other
+  commerce-specific facts.
+- Never fabricate an order status, delivery date, tracking
+  number, refund, cancellation, or transaction result.
+- If the tool result does not contain the requested
+  information, explain what is missing.
+- Distinguish between an action being requested and an
+  action being successfully completed.
+- Do not claim to have performed an operation that was
+  not confirmed by a tool result.
 
-If the user is asking only for the general return policy,
-call ONLY:
-get_return_policy
+============================================================
+5. COMBINING RAG AND MCP ANSWERS
+============================================================
 
-If the user is asking whether the specific order is eligible
-for a return, first obtain the required order information and
-then use the appropriate return-related tool if necessary.
+The user message may contain an answer already obtained
+from the FAQ/RAG system.
 
+- Treat the supplied RAG answer as existing context.
+- Answer the MCP-specific part using actual tool results.
+- When a RAG answer is supplied, preserve its relevant
+  information in the final response.
+- Do not contradict the RAG answer without reliable evidence.
+- Do not repeat the same information unnecessarily.
 
-User:
-"What shipping information do you provide?"
+If no RAG answer is supplied, answer using the MCP results
+and relevant conversational context.
 
-Call ONLY:
-get_shipping_info
+============================================================
+6. RESPONSE STYLE
+============================================================
 
-
-User:
-"What payment methods do you accept?"
-
-Call ONLY:
-get_payment_information
-
-
-6. Multiple tools should be called in the SAME assistant turn
-ONLY when the user explicitly asks for multiple independent
-pieces of information.
-
-Example:
-
-"What is the status of ORD-1005-D and what is your return policy?"
-
-Call:
-get_order_status
-get_return_policy
-
-7. If one tool's result is required to determine the arguments
-or decision for another tool, execute the dependent tool only
-after receiving the first tool's result.
-
-8. Never invent order IDs, customer IDs, tracking numbers,
-statuses, dates, or other information.
-
-IMPORTANT ID FORMATS:
-
-- Order IDs look like: ORD-1005-D
-- Customer IDs look like: CUST-1005
-- An order ID and customer ID are different values.
-- NEVER use an order ID as a customer ID.
-- If the customer ID is required but the user did not provide it,
-  ask the user for the customer ID.
-
-9. If a required tool argument is missing, ask the user for
-that information.
-
-10. Use the actual results returned by the tools.
-
-11. Do not claim that an action was completed unless the
-corresponding MCP tool confirms it.
-
-12. After obtaining the information required to answer the
-user's question, provide a clear and concise final answer.
-
-13. Do not expose internal tool execution details to the user.
-
-RAG CONTEXT AND RESPONSE FORMATTING:
-
-14. The user request may already have been partially answered using
-    FAQ information retrieved by the RAG component.
-
-15. The application may provide a RAG ANSWER alongside the
-    MCP-specific query. Treat that answer as existing information
-    available to you.
-
-16. If a RAG ANSWER is provided:
-
-* Preserve its relevant information in the final response.
-* Answer the remaining part using MCP tool results.
-* Combine both parts into one coherent, concise response.
-* Avoid repeating the same information.
-* Do not contradict the RAG answer unless verified MCP results
-  establish that it is outdated or incorrect.
-
-17. If no RAG ANSWER is provided, answer normally using the
-    user's request and the MCP results.
-
-18. Never invent facts to fill gaps in either source.
-    If required information is missing, ask the user for it.
-
-19. If a required customer ID or another required argument is
-    missing, clearly ask the user for it. Do not imply that an
-    order lookup or action succeeded when it did not.
-
-
-IMPORTANT:
-The user's request determines which tool(s) are necessary.
-Do not call extra tools simply because they might provide
-additional information.
+- Be concise, clear, and helpful.
+- Answer in the same language as the user.
+- Ask a direct question when required information is missing.
+- Do not expose chain-of-thought or internal reasoning.
+- Do not mention internal routing decisions.
+- Do not present unsupported assumptions as facts.
 """
 
 
@@ -541,8 +551,6 @@ async def initialize_mcp():
 
     print(f"MCP get_tools(): {elapsed:.3f}s")
 
-    MCP_TOOLS = await MCP_CLIENT.get_tools()
-
     for tool in MCP_TOOLS:
         if tool.name == "get_order_status":
             print("\n" + "=" * 70)
@@ -588,10 +596,9 @@ async def add_message_node(state: State):
 # RAG NODE
 # ============================================================
 
+
 async def rag_node(state: State):
 
-    
-    
     current_message = state["message"].strip()
     pending_query = state.get("pending_mcp_query", "")
     pending_task = state.get("pending_task", False)
@@ -599,18 +606,47 @@ async def rag_node(state: State):
     print("DEBUG pending_mcp_query:", repr(pending_query))
     print("DEBUG pending_task:", repr(pending_task))
 
+    # ========================================================
+    # RESUME A PENDING MCP TASK
+    # ========================================================
+
     if pending_task and pending_query:
-        original_request = (
-            state.get("pending_user_request")
-            or pending_query
+
+        combined_mcp_query = (
+            f"{pending_query}\n"
+            f"Additional information from user: {current_message}"
         )
-        query = (
-            f"Original request: {original_request}\n"
-            f"Pending MCP task: {pending_query}\n"
-            f"Follow-up from user: {current_message}"
-        )
-    else:
-        query = current_message
+
+        pending_rag_answers = list(dict.fromkeys(
+            state.get("pending_rag_answers", [])
+        ))
+
+        print("\n" + "=" * 60)
+        print("RESUMING PENDING MCP TASK")
+        print("=" * 60)
+        print("Previous MCP query:", pending_query)
+        print("New user information:", current_message)
+        print("Combined MCP query:", combined_mcp_query)
+
+        return {
+            "route": "mcp",
+            "response": "",
+            "rag_answers": pending_rag_answers,
+            "mcp_query": combined_mcp_query,
+            "pending_mcp_query": combined_mcp_query,
+            "pending_user_request": (
+                state.get("pending_user_request")
+                or pending_query
+            ),
+            "pending_rag_answers": pending_rag_answers,
+            "pending_task": True
+        }
+
+    # ========================================================
+    # NORMAL RAG RETRIEVAL AND ROUTING
+    # ========================================================
+
+    query = current_message
 
     print("\n" + "=" * 60)
     print("RAG RETRIEVAL")
@@ -659,6 +695,7 @@ async def rag_node(state: State):
 
     try:
         decision = json.loads(decision_text)
+
     except json.JSONDecodeError:
         print("ERROR: Invalid JSON returned by RAG judge.")
 
@@ -666,26 +703,36 @@ async def rag_node(state: State):
             "route": "mcp",
             "response": "",
             "rag_answers": [],
-            "mcp_query": query
+            "mcp_query": query,
+            "pending_mcp_query": query,
+            "pending_user_request": state["message"],
+            "pending_rag_answers": [],
+            "pending_task": False
         }
 
     rag_indices = decision.get("rag_indices", [])
     mcp_query = decision.get("mcp_query", "").strip()
-
-    # Final RAG answer generated by the Gemini judge
     rag_answer = decision.get("answer", "").strip()
 
-    
-   
-    previous_rag_answers = (
-        state.get("pending_rag_answers", [])
-        if state.get("pending_task", False)
-        else []
-    )
+    # ========================================================
+    # COLLECT RAG ANSWERS
+    # ========================================================
 
-    rag_answers = list(dict.fromkeys(previous_rag_answers))
+    rag_answers = []
 
-    if rag_answer and rag_answer not in rag_answers:
+    for index in rag_indices:
+        if (
+            isinstance(index, int)
+            and 0 <= index < len(faq_candidates)
+        ):
+            candidate_answer = faq_candidates[index]["answer"]
+
+            if candidate_answer not in rag_answers:
+                rag_answers.append(candidate_answer)
+
+    # Use the judge's answer only when no indexed FAQ answer
+    # was collected, preserving the previous judge behavior.
+    if rag_answer and not rag_answers:
         rag_answers.append(rag_answer)
 
     print("\nSELECTED RAG ANSWERS:")
@@ -695,15 +742,20 @@ async def rag_node(state: State):
 
     print(f"\nMCP QUERY: {mcp_query}")
 
+    # ========================================================
+    # ROUTING
+    # ========================================================
+
+    route = decision.get("route", "GENERAL").upper()
+
     if mcp_query:
         route = "mcp"
-    else:
-        route = "rag"
+    elif route not in ("RAG", "GENERAL"):
+        route = "GENERAL"
 
     print(f"ROUTE: {route}")
 
-    
-    if route == "rag":
+    if route == "RAG":
         return {
             "route": "rag",
             "response": "\n\n".join(rag_answers),
@@ -715,20 +767,42 @@ async def rag_node(state: State):
             "pending_task": False
         }
 
-    
+    if route == "GENERAL":
+        return {
+            "route": "rag",
+            "response": rag_answer,
+            "rag_answers": [],
+            "mcp_query": "",
+            "pending_mcp_query": "",
+            "pending_user_request": "",
+            "pending_rag_answers": [],
+            "pending_task": False
+        }
+
+    # ========================================================
+    # MCP ROUTE
+    # ========================================================
+
+    previous_rag_answers = state.get("pending_rag_answers", [])
+
+    combined_rag_answers = list(dict.fromkeys(
+        previous_rag_answers + rag_answers
+    ))
+
     return {
-        "route": route,
+        "route": "mcp",
         "response": "",
-        "rag_answers": rag_answers,
+        "rag_answers": combined_rag_answers,
         "mcp_query": mcp_query,
-        "pending_mcp_query": pending_query or mcp_query,
+        "pending_mcp_query": mcp_query,
         "pending_user_request": (
             state.get("pending_user_request")
             or state["message"]
         ),
-        "pending_rag_answers": rag_answers,
-        "pending_task": pending_task
+        "pending_rag_answers": combined_rag_answers,
+        "pending_task": False
     }
+
 
 # ============================================================
 # MCP AGENT NODE
@@ -947,6 +1021,7 @@ async def mcp_tool_node(state: State):
 
 
 
+
 async def mcp_response_node(state: State):
     if not state["messages"]:
         return {
@@ -958,39 +1033,92 @@ async def mcp_response_node(state: State):
         }
 
     final_message = state["messages"][-1]
-    mcp_response = extract_text(final_message.content)
+    mcp_response = extract_text(final_message.content).strip()
 
-    # Include previous pending answers and current RAG answers.
     rag_answers = (
         state.get("pending_rag_answers", [])
         + state.get("rag_answers", [])
     )
 
-    # Remove duplicate answers while preserving their order.
     rag_answers = list(dict.fromkeys(
         answer.strip()
         for answer in rag_answers
         if answer and answer.strip()
     ))
 
-    # ADD THESE PRINTS HERE
     print("DEBUG pending_rag_answers:", state.get("pending_rag_answers", []))
     print("DEBUG rag_answers:", state.get("rag_answers", []))
     print("DEBUG mcp_response:", repr(mcp_response))
-    
-    
-    if mcp_response and mcp_response.strip():
-        combined_parts = [mcp_response.strip()]
+
+    # Check whether the assistant is asking for missing information.
+    asks_for_customer_id = (
+        "customer id" in mcp_response.lower()
+        and any(
+            phrase in mcp_response.lower()
+            for phrase in (
+                "provide",
+                "need",
+                "please share",
+                "could you",
+                "what is",
+                "required"
+            )
+        )
+    )
+
+    asks_for_order_id = (
+        "order id" in mcp_response.lower()
+        and any(
+            phrase in mcp_response.lower()
+            for phrase in (
+                "provide",
+                "need",
+                "please share",
+                "could you",
+                "what is",
+                "required"
+            )
+        )
+    )
+
+    needs_follow_up = asks_for_customer_id or asks_for_order_id
+
+    if needs_follow_up:
+        pending_query = (
+            state.get("pending_mcp_query")
+            or state.get("mcp_query")
+            or state.get("message", "")
+        )
+
+        pending_user_request = (
+            state.get("pending_user_request")
+            or state.get("message", "")
+        )
+
+        pending_rag_answers = rag_answers
+
+        print("PRESERVING PENDING MCP TASK")
+        print("Pending query:", pending_query)
+        print("Pending user request:", pending_user_request)
+
+    else:
+        pending_query = ""
+        pending_user_request = ""
+        pending_rag_answers = []
+
+    if mcp_response:
+        combined_parts = [mcp_response]
     else:
         combined_parts = rag_answers.copy()
 
     return {
         "response": "\n\n".join(combined_parts),
-        "pending_mcp_query": "",
-        "pending_user_request": "",
-        "pending_rag_answers": [],
-        "pending_task": False
+        "pending_mcp_query": pending_query,
+        "pending_user_request": pending_user_request,
+        "pending_rag_answers": pending_rag_answers,
+        "pending_task": needs_follow_up
     }
+
 
 
 
