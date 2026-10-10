@@ -597,20 +597,31 @@ async def add_message_node(state: State):
 # ============================================================
 
 
+
 async def rag_node(state: State):
 
     current_message = state["message"].strip()
     pending_query = state.get("pending_mcp_query", "")
     pending_task = state.get("pending_task", False)
+    has_pending_task = bool(pending_task and pending_query)
 
     print("DEBUG pending_mcp_query:", repr(pending_query))
     print("DEBUG pending_task:", repr(pending_task))
 
+    # Detect an identifier supplied by the user.
+    # Supports IDs such as ORD-1003-D, CUST-1005, and CUST005.
+    identifier_pattern = (
+        r"\b(?:ORD-[A-Z0-9]+-[A-Z0-9]+|CUST-?[A-Z0-9]+)\b"
+    )
+    supplied_identifier = bool(
+        re.search(identifier_pattern, current_message, re.IGNORECASE)
+    )
+
     # ========================================================
-    # RESUME A PENDING MCP TASK
+    # RESUME A PENDING MCP TASK ONLY WHEN AN ID IS PROVIDED
     # ========================================================
 
-    if pending_task and pending_query:
+    if has_pending_task and supplied_identifier:
 
         combined_mcp_query = (
             f"{pending_query}\n"
@@ -653,9 +664,7 @@ async def rag_node(state: State):
     print("=" * 60)
 
     start = time.perf_counter()
-
     faq_candidates = retrieve_faq(query)
-
     retrieval_time = time.perf_counter() - start
 
     print(f"RAG retrieval time: {retrieval_time:.3f}s")
@@ -681,9 +690,7 @@ async def rag_node(state: State):
     print("\nCalling Gemini RAG Judge...")
 
     start = time.perf_counter()
-
     judge_response = await MCP_LLM.ainvoke(judge_prompt)
-
     judge_time = time.perf_counter() - start
 
     print(f"Gemini RAG Judge: {judge_time:.3f}s")
@@ -698,6 +705,27 @@ async def rag_node(state: State):
 
     except json.JSONDecodeError:
         print("ERROR: Invalid JSON returned by RAG judge.")
+
+        # If a task was already pending, don't discard it.
+        if has_pending_task:
+            return {
+                "route": "rag",
+                "response": (
+                    "I couldn't process that question right now. "
+                    "Your pending order lookup is still waiting "
+                    "for the required identifier."
+                ),
+                "rag_answers": [],
+                "mcp_query": "",
+                "pending_mcp_query": pending_query,
+                "pending_user_request": state.get(
+                    "pending_user_request", pending_query
+                ),
+                "pending_rag_answers": state.get(
+                    "pending_rag_answers", []
+                ),
+                "pending_task": True
+            }
 
         return {
             "route": "mcp",
@@ -730,8 +758,6 @@ async def rag_node(state: State):
             if candidate_answer not in rag_answers:
                 rag_answers.append(candidate_answer)
 
-    # Use the judge's answer only when no indexed FAQ answer
-    # was collected, preserving the previous judge behavior.
     if rag_answer and not rag_answers:
         rag_answers.append(rag_answer)
 
@@ -749,22 +775,32 @@ async def rag_node(state: State):
     route = decision.get("route", "GENERAL").upper()
 
     if mcp_query:
-        route = "mcp"
+        route = "MCP"
     elif route not in ("RAG", "GENERAL"):
         route = "GENERAL"
 
     print(f"ROUTE: {route}")
 
+    # Preserve an existing pending task when a separate
+    # question is answered through RAG.
     if route == "RAG":
         return {
             "route": "rag",
             "response": "\n\n".join(rag_answers),
             "rag_answers": rag_answers,
             "mcp_query": "",
-            "pending_mcp_query": "",
-            "pending_user_request": "",
-            "pending_rag_answers": [],
-            "pending_task": False
+            "pending_mcp_query": (
+                pending_query if has_pending_task else ""
+            ),
+            "pending_user_request": (
+                state.get("pending_user_request", pending_query)
+                if has_pending_task else ""
+            ),
+            "pending_rag_answers": (
+                state.get("pending_rag_answers", [])
+                if has_pending_task else []
+            ),
+            "pending_task": has_pending_task
         }
 
     if route == "GENERAL":
@@ -773,10 +809,18 @@ async def rag_node(state: State):
             "response": rag_answer,
             "rag_answers": [],
             "mcp_query": "",
-            "pending_mcp_query": "",
-            "pending_user_request": "",
-            "pending_rag_answers": [],
-            "pending_task": False
+            "pending_mcp_query": (
+                pending_query if has_pending_task else ""
+            ),
+            "pending_user_request": (
+                state.get("pending_user_request", pending_query)
+                if has_pending_task else ""
+            ),
+            "pending_rag_answers": (
+                state.get("pending_rag_answers", [])
+                if has_pending_task else []
+            ),
+            "pending_task": has_pending_task
         }
 
     # ========================================================
