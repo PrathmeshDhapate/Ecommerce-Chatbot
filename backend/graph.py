@@ -119,8 +119,9 @@ YOUR TASK
    order-related, customer-related, package-related,
    account-related, or action-related commerce information.
 
-3. Assign a question to GENERAL when neither the FAQ candidates
-   nor the available MCP commerce tools can handle it.
+3. Assign a question to GENERAL when it is unrelated to
+   the e-commerce support services and cannot be answered
+   using the FAQ candidates or MCP commerce tools.
 
    Examples include:
    - "What is the weather today?"
@@ -132,6 +133,23 @@ YOUR TASK
 
 5. A single user question may contain multiple parts that need
    different routes.
+
+
+5a. A pending MCP task from an earlier turn may exist. The
+    current USER QUESTION is always the user's latest message.
+
+    - Classify the latest message according to its actual
+      content, using the normal routing rules.
+    - Do not route a new, independent FAQ or GENERAL question
+      to MCP merely because an earlier MCP task is pending.
+    - If the latest message contains an identifier and new
+      question(s), preserve the identifier exactly in mcp_query
+      when it is relevant to the MCP portion.
+    - Do not assume that an identifier in the latest message
+      automatically means the user wants to resume the pending
+      task. Consider the meaning of the complete latest message.
+    - Do not invent missing information or identifiers.
+
 
 6. Select only FAQ candidates that directly answer the question.
    If multiple candidates answer different parts, select all
@@ -174,14 +192,12 @@ YOUR TASK
    The answer must be in the same language as the user's
    question. Do not add unsupported information.
 
-10. If GENERAL is needed, generate a helpful answer using
-    general knowledge.
+10. For GENERAL questions, do not generate an answer to
+    the user's actual question. Set answer to exactly:
 
-    - Answer in the same language as the user's question.
-    - Do not pretend to have access to live information.
-    - If the question requires current information that you
-      cannot verify, clearly state that limitation.
-    - Do not invent current facts, tool results, or data.
+    "I'm an e-commerce support chatbot, so I can only help
+    with questions about our products, orders, shipping,
+    returns, and related services."
 
 11. If the question requires both RAG and MCP, select the
     relevant FAQ candidates and preserve the MCP query.
@@ -208,8 +224,9 @@ YOUR TASK
 
 14. If MCP is not needed, mcp_query must be "".
 
-15. If the route is GENERAL, answer must contain the general
-    response, rag_indices must be [], and mcp_query must be "".
+15. If the route is GENERAL, rag_indices must be [],
+    mcp_query must be "", and answer must contain the
+    fixed chatbot-scope message specified in rule 10.
 
 16. If the route is MCP and RAG is not needed, answer must
     be "".
@@ -303,12 +320,14 @@ FAQ CANDIDATES:
 [1] Shipping takes 5–7 business days.
 
 OUTPUT:
+
 {{
   "route": "GENERAL",
   "rag_indices": [],
   "mcp_query": "",
-  "answer": "Neural networks are machine learning models made up of connected units called neurons. They learn patterns from examples by adjusting the strengths of connections between those units."
+  "answer": "I'm an e-commerce support chatbot, so I can only help with questions about our products, orders, shipping, returns, and related services."
 }}
+
 
 
 Example 6: Current information
@@ -321,12 +340,14 @@ FAQ CANDIDATES:
 [1] Most products can be returned within 30 days.
 
 OUTPUT:
+
 {{
   "route": "GENERAL",
   "rag_indices": [],
   "mcp_query": "",
-  "answer": "I can explain weather conditions generally, but I cannot verify today's live weather without access to a current weather service."
+  "answer": "I'm an e-commerce support chatbot, so I can only help with questions about our products, orders, shipping, returns, and related services."
 }}
+
 
 
 Example 7: Hindi RAG question
@@ -598,6 +619,7 @@ async def add_message_node(state: State):
 
 
 
+
 async def rag_node(state: State):
 
     current_message = state["message"].strip()
@@ -608,17 +630,41 @@ async def rag_node(state: State):
     print("DEBUG pending_mcp_query:", repr(pending_query))
     print("DEBUG pending_task:", repr(pending_task))
 
-    # Detect an identifier supplied by the user.
-    # Supports IDs such as ORD-1003-D, CUST-1005, and CUST005.
+    # ========================================================
+    # DETECT IDENTIFIERS
+    # ========================================================
+
     identifier_pattern = (
         r"\b(?:ORD-[A-Z0-9]+-[A-Z0-9]+|CUST-?[A-Z0-9]+)\b"
     )
+
     supplied_identifier = bool(
-        re.search(identifier_pattern, current_message, re.IGNORECASE)
+        re.search(
+            identifier_pattern,
+            current_message,
+            re.IGNORECASE
+        )
     )
 
+    
+    remaining_message = re.sub(
+        identifier_pattern,
+        "",
+        current_message,
+        flags=re.IGNORECASE
+    )
+
+    remaining_message = re.sub(
+        r"[\s.,!?;:()\[\]{}'\"]+",
+        "",
+        remaining_message
+    )
+
+    identifier_only_message = not remaining_message
+
+
     # ========================================================
-    # RESUME A PENDING MCP TASK ONLY WHEN AN ID IS PROVIDED
+    # RESUME A PENDING MCP TASK WHEN AN ID IS PROVIDED
     # ========================================================
 
     if has_pending_task and supplied_identifier:
@@ -654,7 +700,7 @@ async def rag_node(state: State):
         }
 
     # ========================================================
-    # NORMAL RAG RETRIEVAL AND ROUTING
+    # NORMAL RAG RETRIEVAL
     # ========================================================
 
     query = current_message
@@ -687,6 +733,16 @@ async def rag_node(state: State):
         faq_candidates=faq_candidates_text
     )
 
+    # ========================================================
+    # GEMINI RAG JUDGE
+    # ========================================================
+
+    if MCP_LLM is None:
+        raise RuntimeError(
+            "MCP_LLM is not initialized. "
+            "Ensure initialize_mcp() runs before chat requests."
+        )
+
     print("\nCalling Gemini RAG Judge...")
 
     start = time.perf_counter()
@@ -695,62 +751,152 @@ async def rag_node(state: State):
 
     print(f"Gemini RAG Judge: {judge_time:.3f}s")
 
-    decision_text = extract_text(judge_response.content).strip()
+    decision_text = extract_text(
+        judge_response.content
+    ).strip()
 
-    print("\nRAG JUDGE DECISION:")
-    print(decision_text)
+    print("\nRAG JUDGE RAW DECISION:")
+    print(repr(decision_text))
+
+    # ========================================================
+    # CLEAN AND PARSE JSON
+    # ========================================================
+
+    # Remove an optional Markdown code fence.
+    decision_text = re.sub(
+        r"\A```(?:json)?[ \t]*\r?\n?|\r?\n?```[ \t]*\Z",
+        "",
+        decision_text,
+        flags=re.IGNORECASE
+    ).strip()
 
     try:
         decision = json.loads(decision_text)
 
-    except json.JSONDecodeError:
-        print("ERROR: Invalid JSON returned by RAG judge.")
+        # Ensure the top-level JSON value is an object.
+        if not isinstance(decision, dict):
+            raise ValueError(
+                "RAG judge output must be a JSON object."
+            )
 
-        # If a task was already pending, don't discard it.
+    except (json.JSONDecodeError, ValueError) as exc:
+
+        print("ERROR: Invalid RAG judge JSON:", str(exc))
+
+        if has_pending_task:
+
+            # Preserve the original pending task and RAG context.
+            pending_rag_answers = list(dict.fromkeys(
+                state.get("pending_rag_answers", [])
+            ))
+
+            return {
+                "route": "rag",
+                "response": (
+                    "I couldn't process that question right now. "
+                    "Your pending order lookup is still waiting "
+                    "for the required information."
+                ),
+                "rag_answers": [],
+                "mcp_query": "",
+                "pending_mcp_query": pending_query,
+                "pending_user_request": (
+                    state.get("pending_user_request")
+                    or pending_query
+                ),
+                "pending_rag_answers": pending_rag_answers,
+                "pending_task": True
+            }
+
+        # Normal-query fallback: do not invoke MCP.
+        return {
+            "route": "rag",
+            "response": (
+                "I couldn't process that question right now. "
+                "Please try again."
+            ),
+            "rag_answers": [],
+            "mcp_query": "",
+            "pending_mcp_query": "",
+            "pending_user_request": "",
+            "pending_rag_answers": [],
+            "pending_task": False
+        }
+
+    # ========================================================
+    # EXTRACT AND VALIDATE DECISION FIELDS
+    # ========================================================
+
+    route = decision.get("route", "GENERAL")
+
+    if not isinstance(route, str):
+        route = "GENERAL"
+
+    route = route.upper()
+
+    rag_indices = decision.get("rag_indices", [])
+    mcp_query = decision.get("mcp_query", "")
+    rag_answer = decision.get("answer", "")
+
+    # Invalid field types should not accidentally trigger MCP.
+    if (
+        not isinstance(rag_indices, list)
+        or not isinstance(mcp_query, str)
+        or not isinstance(rag_answer, str)
+        or route not in ("RAG", "MCP", "GENERAL")
+    ):
+        print("ERROR: Invalid fields in RAG judge decision.")
+
         if has_pending_task:
             return {
                 "route": "rag",
                 "response": (
                     "I couldn't process that question right now. "
                     "Your pending order lookup is still waiting "
-                    "for the required identifier."
+                    "for the required information."
                 ),
                 "rag_answers": [],
                 "mcp_query": "",
                 "pending_mcp_query": pending_query,
-                "pending_user_request": state.get(
-                    "pending_user_request", pending_query
+                "pending_user_request": (
+                    state.get("pending_user_request")
+                    or pending_query
                 ),
-                "pending_rag_answers": state.get(
-                    "pending_rag_answers", []
+                "pending_rag_answers": (
+                    state.get("pending_rag_answers", [])
                 ),
                 "pending_task": True
             }
 
         return {
-            "route": "mcp",
-            "response": "",
+            "route": "rag",
+            "response": (
+                "I couldn't process that question right now. "
+                "Please try again."
+            ),
             "rag_answers": [],
-            "mcp_query": query,
-            "pending_mcp_query": query,
-            "pending_user_request": state["message"],
+            "mcp_query": "",
+            "pending_mcp_query": "",
+            "pending_user_request": "",
             "pending_rag_answers": [],
             "pending_task": False
         }
 
-    rag_indices = decision.get("rag_indices", [])
-    mcp_query = decision.get("mcp_query", "").strip()
-    rag_answer = decision.get("answer", "").strip()
+    mcp_query = mcp_query.strip()
+    rag_answer = rag_answer.strip()
 
     # ========================================================
-    # COLLECT RAG ANSWERS
+    # COLLECT SELECTED RAG ANSWERS
     # ========================================================
 
     rag_answers = []
 
     for index in rag_indices:
+
+        # bool is a subclass of int in Python, so reject it.
         if (
             isinstance(index, int)
+            and not isinstance(index, bool)
             and 0 <= index < len(faq_candidates)
         ):
             candidate_answer = faq_candidates[index]["answer"]
@@ -758,6 +904,14 @@ async def rag_node(state: State):
             if candidate_answer not in rag_answers:
                 rag_answers.append(candidate_answer)
 
+        else:
+            print(
+                "WARNING: Ignoring invalid FAQ index:",
+                repr(index)
+            )
+
+    # Preserve the judge-generated answer for GENERAL questions
+    # and when no indexed FAQ answer was selected.
     if rag_answer and not rag_answers:
         rag_answers.append(rag_answer)
 
@@ -772,18 +926,41 @@ async def rag_node(state: State):
     # ROUTING
     # ========================================================
 
-    route = decision.get("route", "GENERAL").upper()
-
+    # A non-empty MCP query means MCP work is required.
     if mcp_query:
         route = "MCP"
-    elif route not in ("RAG", "GENERAL"):
-        route = "GENERAL"
 
     print(f"ROUTE: {route}")
 
-    # Preserve an existing pending task when a separate
-    # question is answered through RAG.
+    # ========================================================
+    # RAG-ONLY RESPONSE
+    # ========================================================
+
     if route == "RAG":
+
+        if not rag_answers:
+            return {
+                "route": "rag",
+                "response": (
+                    "I couldn't find a relevant FAQ answer. "
+                    "Please try rephrasing your question."
+                ),
+                "rag_answers": [],
+                "mcp_query": "",
+                "pending_mcp_query": (
+                    pending_query if has_pending_task else ""
+                ),
+                "pending_user_request": (
+                    state.get("pending_user_request", pending_query)
+                    if has_pending_task else ""
+                ),
+                "pending_rag_answers": (
+                    state.get("pending_rag_answers", [])
+                    if has_pending_task else []
+                ),
+                "pending_task": has_pending_task
+            }
+
         return {
             "route": "rag",
             "response": "\n\n".join(rag_answers),
@@ -803,7 +980,12 @@ async def rag_node(state: State):
             "pending_task": has_pending_task
         }
 
+    # ========================================================
+    # GENERAL RESPONSE
+    # ========================================================
+
     if route == "GENERAL":
+
         return {
             "route": "rag",
             "response": rag_answer,
@@ -827,7 +1009,9 @@ async def rag_node(state: State):
     # MCP ROUTE
     # ========================================================
 
-    previous_rag_answers = state.get("pending_rag_answers", [])
+    previous_rag_answers = (
+        state.get("pending_rag_answers", [])
+    )
 
     combined_rag_answers = list(dict.fromkeys(
         previous_rag_answers + rag_answers
@@ -846,6 +1030,7 @@ async def rag_node(state: State):
         "pending_rag_answers": combined_rag_answers,
         "pending_task": False
     }
+
 
 
 # ============================================================
@@ -1150,8 +1335,12 @@ async def mcp_response_node(state: State):
         pending_user_request = ""
         pending_rag_answers = []
 
-    if mcp_response:
-        combined_parts = [mcp_response]
+    
+    combined_parts = rag_answers.copy()
+
+    if mcp_response and mcp_response not in combined_parts:
+        combined_parts.append(mcp_response)
+
     else:
         combined_parts = rag_answers.copy()
 
