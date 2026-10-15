@@ -4,10 +4,16 @@ import time
 import wave
 import asyncio
 import json
+import re
+import os
 
+
+from fastapi.responses import StreamingResponse
 from contextlib import suppress
 from fastapi import WebSocket, WebSocketDisconnect
 from google.genai import types
+
+from cartesia import AsyncCartesia
 
 from contextlib import asynccontextmanager
 
@@ -25,16 +31,26 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from google import genai
 
-from graph import (
-    graph,
-    initialize_mcp,
-)
+from graph import graph, initialize_mcp, extract_text
 
 from dotenv import load_dotenv
 
 
 load_dotenv()
 
+# ============================================================
+# CARTESIA TTS CONFIGURATION
+# ============================================================
+
+CARTESIA_MODEL_ID = os.getenv("CARTESIA_MODEL_ID", "sonic-3.6")
+
+CARTESIA_VOICE_ID = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+
+CARTESIA_SAMPLE_RATE = 44100
+
+cartesia_client = AsyncCartesia(
+    api_key=os.getenv("CARTESIA_API_KEY")
+)
 
 # ============================================================
 # GEMINI CLIENT
@@ -373,7 +389,7 @@ async def voice(
 
 
 # ============================================================
-# STREAMING SPEECH-TO-TEXT
+# STREAMING SPEECH-TO-TEXT + LANGGRAPH + STREAMING TTS
 # ============================================================
 
 @app.websocket("/voice-stream")
@@ -391,12 +407,12 @@ async def voice_stream(websocket: WebSocket):
     stop_event = asyncio.Event()
     final_event = asyncio.Event()
 
-    # Store the final transcription segments instead of
-    # replacing the previous segment every time.
     final_transcripts = []
+    tts_task = None
+    tts_queue = None
 
     async def send_event(data: dict):
-        """Send an event safely to the React frontend."""
+        """Safely send JSON events to React."""
         async with send_lock:
             try:
                 await websocket.send_json(data)
@@ -404,10 +420,7 @@ async def voice_stream(websocket: WebSocket):
                 pass
 
     def add_transcription_segment(text: str):
-        """
-        Collect final transcription text.
-        Handle distinct segments and cumulative transcripts.
-        """
+        """Collect final transcription segments without duplication."""
         text = text.strip()
 
         if not text:
@@ -419,22 +432,16 @@ async def voice_stream(websocket: WebSocket):
             final_transcripts.append(text)
 
         elif text == current:
-            # Gemini repeated the complete transcript.
             return
 
         elif text.startswith(current):
-            # Gemini sent the complete transcript again,
-            # including the previously received text.
             final_transcripts.clear()
             final_transcripts.append(text)
 
         elif current.startswith(text):
-            # The new text is already contained in the current
-            # complete transcript.
             return
 
         elif text != final_transcripts[-1]:
-            # Gemini sent another distinct final segment.
             final_transcripts.append(text)
 
     try:
@@ -444,10 +451,8 @@ async def voice_stream(websocket: WebSocket):
             model="gemini-3.5-transcribe-live",
             config=types.LiveConnectConfig(
                 response_modalities=["TEXT"],
-                input_audio_transcription=(
-                    types.AudioTranscriptionConfig(
-                        language_codes=[]
-                    )
+                input_audio_transcription=types.AudioTranscriptionConfig(
+                    language_codes=[]
                 ),
             ),
         ) as session:
@@ -460,7 +465,6 @@ async def voice_stream(websocket: WebSocket):
             # ------------------------------------------------
 
             async def forward_audio():
-
                 try:
                     while True:
                         message = await websocket.receive()
@@ -468,7 +472,6 @@ async def voice_stream(websocket: WebSocket):
                         if message["type"] == "websocket.disconnect":
                             break
 
-                        # Raw 16 kHz PCM audio from React.
                         if message.get("bytes") is not None:
                             audio_chunk = message["bytes"]
 
@@ -480,7 +483,6 @@ async def voice_stream(websocket: WebSocket):
                                     )
                                 )
 
-                        # Stop recording.
                         elif message.get("text") is not None:
                             control = json.loads(message["text"])
 
@@ -500,7 +502,6 @@ async def voice_stream(websocket: WebSocket):
             # ------------------------------------------------
 
             async def receive_transcription():
-
                 async for response in session.receive():
 
                     content = response.server_content
@@ -508,7 +509,6 @@ async def voice_stream(websocket: WebSocket):
                     if not content:
                         continue
 
-                    # Interim transcription while the user speaks.
                     interim = getattr(
                         content,
                         "interim_input_transcription",
@@ -521,7 +521,6 @@ async def voice_stream(websocket: WebSocket):
                             "text": interim.text,
                         })
 
-                    # Final transcription segment.
                     final = getattr(
                         content,
                         "input_transcription",
@@ -534,44 +533,32 @@ async def voice_stream(websocket: WebSocket):
                         if text:
                             add_transcription_segment(text)
 
-                            print(
-                                "Final transcription segment:",
-                                text,
-                            )
+                            transcript = " ".join(final_transcripts)
 
-                            print(
-                                "Collected transcript:",
-                                " ".join(final_transcripts),
-                            )
+                            print("Final transcription segment:", text)
+                            print("Collected transcript:", transcript)
 
-                            # Notify the frontend, but do not
-                            # treat the first segment as the end
-                            # of the complete transcription.
                             await send_event({
                                 "type": "final",
-                                "text": " ".join(final_transcripts),
+                                "text": transcript,
                             })
 
                             final_event.set()
 
-            # Run both tasks concurrently.
             sender_task = asyncio.create_task(forward_audio())
             receiver_task = asyncio.create_task(
                 receive_transcription()
             )
 
             try:
-                # Wait until the user presses Stop.
                 await stop_event.wait()
 
-                # Wait for at least one final transcription.
                 await asyncio.wait_for(
                     final_event.wait(),
                     timeout=15,
                 )
 
-                # Wait until no new final segment arrives for
-                # 1.5 seconds. This allows late segments to arrive.
+                # Allow late transcription segments to arrive.
                 while True:
                     final_event.clear()
 
@@ -593,7 +580,7 @@ async def voice_stream(websocket: WebSocket):
                         await task
 
             # ------------------------------------------------
-            # COMBINE ALL TRANSCRIPTION SEGMENTS
+            # COMPLETE TRANSCRIPTION
             # ------------------------------------------------
 
             final_transcript = " ".join(final_transcripts).strip()
@@ -607,19 +594,180 @@ async def voice_stream(websocket: WebSocket):
                 await send_event({
                     "type": "error",
                     "message": (
-                        "No speech was recognized. "
-                        "Please try again."
+                        "No speech was recognized. Please try again."
                     ),
                 })
                 return
 
+            
             # ------------------------------------------------
-            # SEND COMPLETE QUESTION TO LANGGRAPH
+            # CARTESIA TTS QUEUE AND BACKGROUND WORKER
             # ------------------------------------------------
 
-            print("Sending complete transcript to LangGraph...")
+            tts_queue = asyncio.Queue()
+            tts_buffer = ""
+            tts_text_queued = False
 
-            result = await graph.ainvoke(
+            async def queue_tts_text(text: str, force=False):
+                """
+                Automatically collect streamed text into sentences.
+                No manually written text segments are required.
+                """
+
+                nonlocal tts_buffer, tts_text_queued
+
+                if text:
+                    tts_buffer += text
+
+                while tts_buffer:
+                    # Find the first sentence-ending punctuation.
+                    match = re.search(r'[.!?](?:["\']?)(?:\s+|$)', tts_buffer)
+
+                    if match:
+                        split_at = match.end()
+                    elif len(tts_buffer) >= 180:
+                        # Prevent very long sentences from waiting forever.
+                        split_at = tts_buffer.rfind(" ", 0, 180)
+
+                        if split_at <= 0:
+                            split_at = min(180, len(tts_buffer))
+                    elif force:
+                        split_at = len(tts_buffer)
+                    else:
+                        break
+
+                    segment = tts_buffer[:split_at].strip()
+                    tts_buffer = tts_buffer[split_at:].lstrip()
+
+                    if segment:
+                        print(
+                            f"[CARTESIA TEXT] {segment}",
+                            flush=True,
+                        )
+
+                        await tts_queue.put(segment)
+                        tts_text_queued = True
+
+                if force:
+                    tts_buffer = ""
+
+            async def tts_worker():
+                """
+                One Cartesia WebSocket per complete response.
+                Text is pushed progressively while audio is received.
+                """
+
+                started_at = time.perf_counter()
+                first_audio = True
+                audio_chunks = 0
+
+                async with cartesia_client.tts.websocket_connect() as ws:
+
+                    connected_at = time.perf_counter()
+
+                    print(
+                        "[CARTESIA] WebSocket connected in "
+                        f"{connected_at - started_at:.3f}s",
+                        flush=True,
+                    )
+
+                    ctx = ws.context(
+                        model_id=CARTESIA_MODEL_ID,
+                        voice=CARTESIA_VOICE_ID,
+                        output_format={
+                            "container": "raw",
+                            "encoding": "pcm_s16le",
+                            "sample_rate": CARTESIA_SAMPLE_RATE,
+                        },
+                        language="en",
+                    )
+
+                    await send_event({
+                        "type": "tts_start",
+                        "sample_rate": CARTESIA_SAMPLE_RATE,
+                    })
+
+                    async def receive_audio():
+                        nonlocal first_audio, audio_chunks
+
+                        async for event in ctx.receive():
+                            if event.type != "chunk" or not event.audio:
+                                continue
+
+                            if first_audio:
+                                first_audio = False
+
+                                print(
+                                    "[CARTESIA] First audio received in "
+                                    f"{time.perf_counter() - connected_at:.3f}s "
+                                    "after connection",
+                                    flush=True,
+                                )
+
+                            audio_chunks += 1
+
+                            async with send_lock:
+                                await websocket.send_bytes(event.audio)
+
+                    receiver = asyncio.create_task(receive_audio())
+
+                    try:
+                        while True:
+                            segment = await tts_queue.get()
+
+                            try:
+                                if segment is None:
+                                    break
+
+                                # Send text over the existing connection.
+                                await ctx.push(segment)
+
+                            finally:
+                                tts_queue.task_done()
+
+                        # Tell Cartesia no more text is coming.
+                        await ctx.no_more_inputs()
+
+                        # Wait until the final audio chunks arrive.
+                        await receiver
+
+                    except Exception:
+                        if not receiver.done():
+                            receiver.cancel()
+
+                        with suppress(asyncio.CancelledError, Exception):
+                            await receiver
+
+                        raise
+
+                    # Now print the final audio chunk count.
+                    print(
+                        f"[CARTESIA] Audio chunks sent: {audio_chunks}",
+                        flush=True,
+                    )
+
+                    await send_event({"type": "tts_end"})
+
+                    print(
+                        "[CARTESIA] Total TTS time: "
+                        f"{time.perf_counter() - started_at:.3f}s",
+                        flush=True,
+                    )
+
+            tts_task = asyncio.create_task(tts_worker())
+
+
+            # ------------------------------------------------
+            # LANGGRAPH STREAMING
+            # ------------------------------------------------
+
+            print("Starting LangGraph streaming...")
+
+            graph_start = time.perf_counter()
+            answer = ""
+            streamed_mcp_text = False
+
+            async for mode, chunk in graph.astream(
                 {
                     "message": final_transcript,
                     "route": "",
@@ -631,36 +779,152 @@ async def voice_stream(websocket: WebSocket):
                         "thread_id": thread_id,
                     }
                 },
+                stream_mode=["updates", "messages"],
+            ):
+
+                # --------------------------------------------
+                # STREAM MCP LLM TEXT
+                # --------------------------------------------
+
+                if mode == "messages":
+                    message_chunk, metadata = chunk
+                    print(
+                        "STREAMING NODE:",
+                        metadata.get("langgraph_node"),
+                        "TEXT:",
+                        getattr(chunk[0], "content", ""),
+                        flush=True,
+                    )
+                    if metadata.get("langgraph_node") != "mcp_agent":
+                        continue
+
+                    content = getattr(
+                        message_chunk,
+                        "content",
+                        None,
+                    )
+
+                    text = ""
+
+                    if isinstance(content, str):
+                        text = content
+
+                    elif isinstance(content, list):
+                        text = "".join(
+                            item.get("text", "")
+                            for item in content
+                            if isinstance(item, dict)
+                            and item.get("type") == "text"
+                        )
+
+                    if text:
+                        streamed_mcp_text = True
+
+                        # Send text to React immediately.
+                        await send_event({
+                            "type": "answer_chunk",
+                            "text": text,
+                        })
+
+                        # Also feed text into the TTS queue.
+                        await queue_tts_text(text)
+
+                # --------------------------------------------
+                # CAPTURE COMPLETED NODE RESPONSES
+                # --------------------------------------------
+
+                elif mode == "updates":
+
+                    for node_name, node_update in chunk.items():
+
+                        # RAG-only response.
+                        if (
+                            node_name == "rag"
+                            and node_update.get("route") == "rag"
+                        ):
+                            answer = node_update.get("response", "")
+
+                            if answer:
+                                await send_event({
+                                    "type": "answer_chunk",
+                                    "text": answer,
+                                })
+
+                                await queue_tts_text(answer)
+
+                        # Blocked / unsupported question.
+                        elif node_name == "blocked":
+                            answer = node_update.get("response", "")
+
+                            if answer:
+                                await send_event({
+                                    "type": "answer_chunk",
+                                    "text": answer,
+                                })
+
+                                await queue_tts_text(answer)
+
+                        # Save the authoritative final MCP response.
+                        elif node_name == "mcp_response":
+                            answer = node_update.get(
+                                "response",
+                                answer,
+                            )
+
+            graph_elapsed = time.perf_counter() - graph_start
+
+            print(
+                f"LangGraph streaming completed: "
+                f"{graph_elapsed:.3f}s"
             )
 
-            answer = result["response"]
+            if not answer.strip():
+                await send_event({
+                    "type": "error",
+                    "message": (
+                        "Sorry, I could not generate a response. "
+                        "Please try again."
+                    ),
+                })
 
-            # ------------------------------------------------
-            # SEND TEXT ANSWER AND STREAM TTS
-            # ------------------------------------------------
+                await tts_queue.put(None)
+                await tts_task
+                tts_task = None
+                return
 
-            print("Sending text answer to React...")
+            # --------------------------------------------
+            # FALLBACK IF NO TEXT WAS STREAMED
+            # --------------------------------------------
 
+            if not tts_text_queued and answer.strip():
+                # Queue the final answer only if no route
+                # already supplied text to the TTS queue.
+                await queue_tts_text(answer)
+
+            # Flush any incomplete sentence.
+            await queue_tts_text("", force=True)
+
+            # Tell React the complete answer is available.
             await send_event({
                 "type": "answer",
                 "transcription": final_transcript,
                 "answer": answer,
             })
 
-            print("Starting TTS streaming...")
-
-            await stream_tts_audio(answer, websocket)
+            # Finish queued TTS after all generated text
+            # has been submitted.
+            await tts_queue.put(None)
+            await tts_task
+            tts_task = None
 
             print("STT + LangGraph + TTS completed.")
             print("STT stream completed.")
 
     except asyncio.TimeoutError:
-
         await send_event({
             "type": "error",
             "message": (
-                "Transcription timed out. "
-                "Please try again."
+                "Transcription timed out. Please try again."
             ),
         })
 
@@ -668,123 +932,150 @@ async def voice_stream(websocket: WebSocket):
         print("Frontend disconnected.")
 
     except Exception as error:
-        print("STT streaming error:", repr(error))
+        print("Voice streaming error:", repr(error))
 
         await send_event({
             "type": "error",
-            "message": (
-                "Voice transcription failed. "
-                "Please try again."
-            ),
+            "message": "Voice processing failed. Please try again.",
         })
 
     finally:
         stop_event.set()
+
+        if tts_task is not None and not tts_task.done():
+            tts_task.cancel()
+
+            with suppress(asyncio.CancelledError, Exception):
+                await tts_task
 
         with suppress(Exception):
             await websocket.close()
 
 
 
-TTS_MODEL = "gemini-3.1-flash-tts-preview"
 
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
 
-async def stream_tts_audio(text: str, websocket):
-    """
-    Generate speech from text and send audio chunks
-    to the frontend through WebSocket.
-    """
+    async def generate():
+        start_time = time.perf_counter()
 
-    if not text.strip():
-        return
+        streamed_text = ""
+        final_response = ""
 
-    start_time = time.perf_counter()
-    first_chunk = True
-
-    # Tell the frontend that audio streaming is starting.
-    await websocket.send_json({
-        "type": "tts_start",
-        "sample_rate": 24000
-    })
-
-    try:
-        # Run the synchronous streaming API outside the event loop.
-        def generate_audio():
-            return client.interactions.create(
-                model=TTS_MODEL,
-                input=text,
-                response_format={"type": "audio"},
-                generation_config={
-                    "speech_config": [
-                        {"voice": "Kore"}
-                    ]
-                },
-                stream=True,
+        def send_event(event_type, data):
+            return (
+                f"data: {json.dumps({'type': event_type, **data})}\n\n"
             )
-        print("TTS: Starting generation request...", flush=True)
-        events = await asyncio.to_thread(generate_audio)
+
         try:
-            events = await asyncio.wait_for(
-                asyncio.to_thread(generate_audio),
-                timeout=30
-            )
-        except asyncio.TimeoutError:
-            print(
-                "TTS ERROR: Generation request timed out after 30 seconds.",
-                flush=True
-            )
-            await websocket.send_json({
-                "type": "tts_error",
-                "message": "Speech generation timed out."
-            })
-            return
-        print("TTS: Generation request returned.", flush=True)
-        for event in events:
-            print(
-                "TTS event received:",
-                getattr(event, "event_type", "unknown"),
-                flush=True,
-            )
-            if getattr(event, "event_type", None) != "step.delta":
-                continue
+            async for mode, chunk in graph.astream(
+                {
+                    "message": request.message,
+                    "route": "",
+                    "response": "",
+                    "messages": [],
+                },
+                config={
+                    "configurable": {
+                        "thread_id": request.thread_id
+                    }
+                },
+                stream_mode=["updates", "messages"],
+            ):
 
-            delta = getattr(event, "delta", None)
+                # 1. Handle graph node updates
+                if mode == "updates":
 
-            if getattr(delta, "type", None) != "audio":
-                continue
+                    for node_name, update in chunk.items():
 
-            audio_data = getattr(delta, "data", None)
+                        response = update.get("response", "")
 
-            if not audio_data:
-                continue
+                        if response:
+                            final_response = response
 
-            # Decode audio if the SDK provides base64 text.
-            if isinstance(audio_data, str):
-                audio_data = base64.b64decode(audio_data)
+                        # RAG and unsupported-question answers
+                        if (
+                            node_name == "rag"
+                            and response
+                            and not streamed_text
+                        ):
+                            streamed_text = response
 
-            if first_chunk:
-                first_chunk = False
-                print(
-                    "TTS first chunk:",
-                    round(time.perf_counter() - start_time, 3),
-                    "seconds"
+                            yield send_event(
+                                "token",
+                                {"text": response}
+                            )
+
+                        # Customer ID validation response
+                        elif (
+                            node_name == "blocked"
+                            and response
+                            and not streamed_text
+                        ):
+                            streamed_text = response
+
+                            yield send_event(
+                                "token",
+                                {"text": response}
+                            )
+
+                # 2. Handle genuine LLM text chunks
+                elif mode == "messages":
+
+                    message_chunk, metadata = chunk
+
+                    node_name = metadata.get(
+                        "langgraph_node", ""
+                    )
+
+                    # Ignore RAG judge output and tool results
+                    if node_name != "mcp_agent":
+                        continue
+
+                    text = extract_text(
+                        getattr(message_chunk, "content", "")
+                    )
+
+                    if text:
+                        streamed_text += text
+
+                        yield send_event(
+                            "token",
+                            {"text": text}
+                        )
+
+            # 3. Send a complete answer if no chunks were streamed
+            if final_response and not streamed_text:
+                streamed_text = final_response
+
+                yield send_event(
+                    "token",
+                    {"text": final_response}
                 )
 
-            # Send raw audio bytes as a WebSocket binary message.
-            await websocket.send_bytes(audio_data)
+            # 4. Tell the frontend that the response is complete
+            yield send_event(
+                "done",
+                {
+                    "answer": final_response or streamed_text,
+                    "elapsed_seconds": round(
+                        time.perf_counter() - start_time, 3
+                    ),
+                },
+            )
 
-        await websocket.send_json({"type": "tts_end"})
+        except Exception as e:
+            yield send_event(
+                "error",
+                {"message": str(e)}
+            )
 
-        print(
-            "TTS streaming completed:",
-            round(time.perf_counter() - start_time, 3),
-            "seconds"
-        )
-
-    except Exception as error:
-        print("TTS streaming error:", repr(error))
-
-        await websocket.send_json({
-            "type": "tts_error",
-            "message": "Could not generate speech."
-        })
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

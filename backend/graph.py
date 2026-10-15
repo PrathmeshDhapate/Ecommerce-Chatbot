@@ -592,7 +592,8 @@ async def initialize_mcp():
         print(tool.name)
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite"
+        model="gemini-3.5-flash-lite",
+        streaming=True,
     )
 
     MCP_LLM = llm.bind_tools(MCP_TOOLS)
