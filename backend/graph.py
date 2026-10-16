@@ -89,6 +89,25 @@ def extract_text(content):
     return str(content)
 
 
+def normalize_identifier(identifier: str) -> str:
+    identifier = identifier.strip().upper()
+
+    customer_match = re.fullmatch(r"CUST-?(\d+)", identifier)
+    if customer_match:
+        return f"CUST-{customer_match.group(1)}"
+
+    order_match = re.fullmatch(
+        r"ORD-?(\d+)(?:-([A-Z0-9]+))?",
+        identifier,
+    )
+    if order_match:
+        order_number, suffix = order_match.groups()
+
+        return f"ORD-{order_number}-{suffix or 'D'}"
+
+    return identifier
+
+
 # ============================================================
 # RAG JUDGE PROMPT
 # ============================================================
@@ -189,8 +208,21 @@ YOUR TASK
 9. If RAG is needed, generate a concise answer using ONLY
    information contained in the selected FAQ candidates.
 
-   The answer must be in the same language as the user's
-   question. Do not add unsupported information.
+   LANGUAGE REQUIREMENTS:
+   - Detect the language of the user's original question.
+   - Write the answer in that same language, even when the
+     retrieved FAQ candidates are written in English.
+   - Translate the relevant FAQ information naturally into
+     the user's language without changing its meaning.
+   - Preserve all factual details, numbers, dates, conditions,
+     and limitations from the selected FAQ candidates.
+   - Do not answer in English merely because the FAQ candidates
+     are written in English.
+   - If the user mixes languages, respond in the dominant
+     language of the question.
+   - Keep order IDs, customer IDs, tracking numbers, and other
+     identifiers unchanged.
+   - Do not add unsupported information.
 
 10. For GENERAL questions, do not generate an answer to
     the user's actual question. Set answer to exactly:
@@ -638,7 +670,7 @@ async def rag_node(state: State):
     # ========================================================
 
     identifier_pattern = (
-        r"\b(?:ORD-[A-Z0-9]+-[A-Z0-9]+|CUST-?[A-Z0-9]+)\b"
+        r"\b(?:ORD-?\d+(?:-[A-Z0-9]+)?|CUST-?\d+)\b"
     )
 
     supplied_identifier = bool(
@@ -888,35 +920,39 @@ async def rag_node(state: State):
     mcp_query = mcp_query.strip()
     rag_answer = rag_answer.strip()
 
+
     # ========================================================
     # COLLECT SELECTED RAG ANSWERS
     # ========================================================
 
     rag_answers = []
 
-    for index in rag_indices:
+    # Prefer the judge-generated answer.
+    # It may combine multiple FAQs and preserves the user's language.
+    if rag_answer:
+        rag_answers = [rag_answer]
 
-        # bool is a subclass of int in Python, so reject it.
-        if (
-            isinstance(index, int)
-            and not isinstance(index, bool)
-            and 0 <= index < len(faq_candidates)
-        ):
-            candidate_answer = faq_candidates[index]["answer"]
+    else:
+        # Fall back to selected FAQ answers if the judge
+        # did not generate an answer.
+        for index in rag_indices:
 
-            if candidate_answer not in rag_answers:
-                rag_answers.append(candidate_answer)
+            # bool is a subclass of int in Python, so reject it.
+            if (
+                isinstance(index, int)
+                and not isinstance(index, bool)
+                and 0 <= index < len(faq_candidates)
+            ):
+                candidate_answer = faq_candidates[index]["answer"]
 
-        else:
-            print(
-                "WARNING: Ignoring invalid FAQ index:",
-                repr(index)
-            )
+                if candidate_answer and candidate_answer not in rag_answers:
+                    rag_answers.append(candidate_answer)
 
-    # Preserve the judge-generated answer for GENERAL questions
-    # and when no indexed FAQ answer was selected.
-    if rag_answer and not rag_answers:
-        rag_answers.append(rag_answer)
+            else:
+                print(
+                    "WARNING: Ignoring invalid FAQ index:",
+                    repr(index)
+                )
 
     print("\nSELECTED RAG ANSWERS:")
 
@@ -1078,8 +1114,10 @@ async def mcp_agent_node(state: State):
         if rag_context:
             user_content = (
                 f"RAG ANSWER ALREADY AVAILABLE:\n{rag_context}\n\n"
-                f"Answer the MCP-specific part and preserve the "
-                f"relevant RAG information in your final response.\n\n"
+                f"Answer only the MCP-specific part of the user's request. "
+                f"Do not repeat or restate the RAG answer, because it will "
+                f"be combined with your response separately.\n\n"
+
                 f"{user_content}"
             )
 
@@ -1108,8 +1146,11 @@ async def mcp_agent_node(state: State):
         if rag_context:
             user_content = (
                 f"RAG ANSWER ALREADY AVAILABLE:\n{rag_context}\n\n"
-                f"Answer the user's request using the RAG answer "
-                f"and the MCP tool result.\n\n"
+                f"Answer only the MCP-specific part of the user's request "
+                f"using the MCP tool result. Do not repeat or restate the "
+                f"RAG answer, because it will be combined with your response "
+                f"separately.\n\n"
+
                 f"{user_content}"
             )
 
@@ -1165,22 +1206,49 @@ def validate_tool_calls(state: State):
     )
 
     supplied_customer_ids = {
-        cid.casefold()
+        normalize_identifier(cid)
         for cid in re.findall(
-            r"\bCUST-?[A-Za-z0-9-]+\b",
+            r"\bCUST-?\d+\b",
+            user_text,
+            flags=re.IGNORECASE,
+        )
+    }
+
+    supplied_order_ids = {
+        normalize_identifier(oid)
+        for oid in re.findall(
+            r"\bORD-?\d+(?:-[A-Z0-9]+)?\b",
             user_text,
             flags=re.IGNORECASE,
         )
     }
 
     for call in last_message.tool_calls:
+        args = call.get("args", {})
+
+        # Validate the order ID if the tool uses one.
+        order_id = args.get("order_id")
+
+        if order_id is not None:
+            if not isinstance(order_id, str):
+                print("BLOCKED: Invalid order ID type")
+                return "blocked"
+
+            normalized_order_id = normalize_identifier(order_id)
+
+            if normalized_order_id not in supplied_order_ids:
+                print("BLOCKED: Order ID was not supplied by the user")
+                return "blocked"
+
+            args["order_id"] = normalized_order_id
+
+        # Preserve your existing customer ID safeguard.
         if call["name"] in customer_id_tools:
-            args = call.get("args", {})
             customer_id = args.get("customer_id", "")
 
             if (
                 not isinstance(customer_id, str)
-                or customer_id.casefold() not in supplied_customer_ids
+                or normalize_identifier(customer_id) not in supplied_customer_ids
             ):
                 print(
                     f"\n❌ BLOCKED: customer_id was not "
@@ -1337,15 +1405,12 @@ async def mcp_response_node(state: State):
         pending_query = ""
         pending_user_request = ""
         pending_rag_answers = []
-
     
     combined_parts = rag_answers.copy()
 
-    if mcp_response and mcp_response not in combined_parts:
+    if mcp_response:
         combined_parts.append(mcp_response)
 
-    else:
-        combined_parts = rag_answers.copy()
 
     return {
         "response": "\n\n".join(combined_parts),

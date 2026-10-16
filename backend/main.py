@@ -621,7 +621,10 @@ async def voice_stream(websocket: WebSocket):
 
                 while tts_buffer:
                     # Find the first sentence-ending punctuation.
-                    match = re.search(r'[.!?](?:["\']?)(?:\s+|$)', tts_buffer)
+                    match = re.search(
+                        r'[.!?।]["\']?(?:\s+|$)',
+                        tts_buffer,
+                    )
 
                     if match:
                         split_at = match.end()
@@ -766,6 +769,7 @@ async def voice_stream(websocket: WebSocket):
             graph_start = time.perf_counter()
             answer = ""
             streamed_mcp_text = False
+            rag_response_queued = False
 
             async for mode, chunk in graph.astream(
                 {
@@ -837,20 +841,31 @@ async def voice_stream(websocket: WebSocket):
 
                     for node_name, node_update in chunk.items():
 
+                        
                         # RAG-only response.
                         if (
                             node_name == "rag"
                             and node_update.get("route") == "rag"
                         ):
-                            answer = node_update.get("response", "")
+                            response_text = node_update.get("response", "")
 
-                            if answer:
+                            if response_text and not rag_response_queued:
+                                answer = response_text
+                                rag_response_queued = True
+
+                                print(
+                                    "[RAG TTS] Queueing response once:",
+                                    repr(response_text),
+                                    flush=True,
+                                )
+
                                 await send_event({
                                     "type": "answer_chunk",
-                                    "text": answer,
+                                    "text": response_text,
                                 })
 
-                                await queue_tts_text(answer)
+                                await queue_tts_text(response_text)
+
 
                         # Blocked / unsupported question.
                         elif node_name == "blocked":
@@ -991,6 +1006,9 @@ async def chat_stream(request: ChatRequest):
 
                         response = update.get("response", "")
 
+                        print(f"\nDEBUG STREAM NODE: {node_name}")
+                        print(f"DEBUG NODE RESPONSE: {response!r}")
+
                         if response:
                             final_response = response
 
@@ -1049,7 +1067,11 @@ async def chat_stream(request: ChatRequest):
             if final_response and not streamed_text:
                 streamed_text = final_response
 
-                yield send_event(
+            print("\nDEBUG FINAL RESPONSE:", repr(final_response))
+            print("DEBUG STREAMED TEXT:", repr(streamed_text))
+            print("DEBUG DONE ANSWER:", repr(final_response or streamed_text))
+
+            yield send_event(
                     "token",
                     {"text": final_response}
                 )
