@@ -61,6 +61,9 @@ class State(TypedDict):
     pending_rag_answers: list[str]
     pending_task: bool
 
+    # for preserving the variables context we can store ids here
+    entity_context: dict
+
 
 # ============================================================
 # HELPERS
@@ -89,23 +92,54 @@ def extract_text(content):
     return str(content)
 
 
-def normalize_identifier(identifier: str) -> str:
+
+def normalize_identifier(identifier):
     identifier = identifier.strip().upper()
 
-    customer_match = re.fullmatch(r"CUST-?(\d+)", identifier)
+    customer_match = re.fullmatch(
+        r"CUST(?:OMER)?-?(\d+)",
+        identifier,
+    )
     if customer_match:
         return f"CUST-{customer_match.group(1)}"
 
     order_match = re.fullmatch(
-        r"ORD-?(\d+)(?:-([A-Z0-9]+))?",
+        r"ORD(?:ER)?-?(\d+)(?:-([A-Z0-9]+))?",
         identifier,
     )
     if order_match:
         order_number, suffix = order_match.groups()
-
         return f"ORD-{order_number}-{suffix or 'D'}"
 
     return identifier
+
+
+
+def update_entity_context(state: State) -> dict:
+    context = dict(state.get("entity_context") or {})
+    message = state["message"]
+
+    customer_ids = re.findall(
+        r"\b(?:CUST(?:OMER)?-?\d+)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+
+    order_ids = re.findall(
+        r"\b(?:ORD(?:ER)?-?\d+(?:-[A-Z0-9]+)?)\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+
+    # Normalize identifiers using your existing helper.
+    if customer_ids:
+        context["customer_id"] = normalize_identifier(customer_ids[-1])
+
+    if order_ids:
+        context["order_id"] = normalize_identifier(order_ids[-1])
+
+    return {"entity_context": context}
+
 
 
 # ============================================================
@@ -231,10 +265,15 @@ YOUR TASK
     with questions about our products, orders, shipping,
     returns, and related services."
 
-11. If the question requires both RAG and MCP, select the
-    relevant FAQ candidates and preserve the MCP query.
-    The answer field should contain only the answer to the
-    RAG portion. The MCP agent will handle the MCP portion.
+11. Decide whether the latest user question independently requests FAQ information, in addition to any MCP task.
+
+    - Set use_rag to true only when the user explicitly asks a distinct informational or policy question that can be answered by the FAQ candidates.
+    - Set use_rag to false when the user asks only for a specific order's status, tracking, cancellation, return, refund, or another order-specific action.
+    - The fact that FAQ candidates contain information related to the user's action does not mean the user requested an FAQ answer.
+    - For example, "Can I return this order?" requires MCP only, even if retrieved FAQs describe the return policy.
+    - "What is the return policy, and can I return this order?" requires both RAG and MCP.
+    - When use_rag is false, return rag_indices as [] and answer as "".
+    - When use_rag is true, select only FAQ candidates answering the distinct informational part of the question.
 
 12. Choose the route using these rules:
 
@@ -252,16 +291,13 @@ YOUR TASK
       then RAG. Preserve the relevant information for the
       other parts using rag_indices and mcp_query.
 
-13. If RAG is not needed, rag_indices must be [].
+13. If `use_rag` is false, `rag_indices` must be [] and `answer` must be "".
 
-14. If MCP is not needed, mcp_query must be "".
+14. If `use_rag` is true, select only the FAQ candidates that directly answer the informational part of the question and provide their answer in `answer`.
 
-15. If the route is GENERAL, rag_indices must be [],
-    mcp_query must be "", and answer must contain the
-    fixed chatbot-scope message specified in rule 10.
+15. If MCP is not needed, `mcp_query` must be "".
 
-16. If the route is MCP and RAG is not needed, answer must
-    be "".
+16. If the route is GENERAL, `use_rag` must be false, `rag_indices` must be [], `mcp_query` must be "", and `answer` must contain the fixed chatbot-scope message specified in rule 10.
 
 17. Never invent customer IDs, order IDs, or other identifiers.
 
@@ -318,6 +354,7 @@ FAQ CANDIDATES:
 OUTPUT:
 {{
   "route": "MCP",
+  "use_rag": true,
   "rag_indices": [0],
   "mcp_query": "What is the status of order ORD-1005-D? My customer ID is cust005.",
   "answer": "Most products can be returned within 30 days."
@@ -336,6 +373,7 @@ FAQ CANDIDATES:
 OUTPUT:
 {{
   "route": "MCP",
+  "use_rag": false,
   "rag_indices": [],
   "mcp_query": "What is the status of order ORD-1005-D?",
   "answer": ""
@@ -406,6 +444,7 @@ Return ONLY valid JSON with exactly these four fields:
 
 {{
   "route": "RAG" | "MCP" | "GENERAL",
+  "use_rag": true | false,
   "rag_indices": [integer indices],
   "mcp_query": "string",
   "answer": "string"
@@ -425,6 +464,14 @@ Rules:
 - Preserve all user-provided identifiers exactly.
 - Return valid JSON only.
 - Do not include markdown or explanations outside the JSON.
+- use_rag must be a boolean.
+- If route is MCP and use_rag is false, rag_indices must be []
+  and answer must be "".
+- If route is MCP and use_rag is true, select relevant FAQ
+  candidates and answer only the RAG portion.
+- If route is GENERAL, use_rag must be false, rag_indices
+  must be [], and answer must contain the fixed scope message.
+- If route is RAG, use_rag must be true.
 """
 
 
@@ -446,6 +493,11 @@ using the available MCP tools.
 - Call every necessary tool for the requested tasks. Do not assume that completing one task completes the entire request.
 - For an order-status request, use `get_order_status`.
 - For a return request, use `process_return` directly unless the user explicitly asks for order status or the return workflow requires a separate status check.
+- For an order-specific request such as "Can I return this order?", do not call `get_return_policy` merely to answer the general eligibility question.
+- If the required item IDs or return reason are missing, ask the user for those details before calling `process_return`.
+- Do not call `get_return_policy` as a substitute for collecting the required arguments for `process_return`.
+- Call `get_return_policy` when the user independently asks about the general return policy or eligibility rules.
+- If the user asks both whether a return is allowed under the general policy and to initiate a return for a specific order, answer the policy question using the appropriate source and handle the order-specific return separately.
 - If the user requests both order status and a return, call both `get_order_status` and `process_return`.
 - Do not call `get_order_status` merely to verify an order before processing a return when status was not requested.
 - Never invent tool names, arguments, or tool results.
@@ -549,6 +601,32 @@ and relevant conversational context.
 - Do not expose chain-of-thought or internal reasoning.
 - Do not mention internal routing decisions.
 - Do not present unsupported assumptions as facts.
+
+Conversation entity context:
+{entity_context}
+
+Use this context to interpret references such as "this order"
+or "that customer". The context helps resolve references but
+does not determine the route by itself.
+
+Route based on the user's intent, not just the retrieved FAQ candidates.
+
+- Route requests to perform or initiate an action on a specific order
+  to MCP. Examples: "Can I return this order?", "Return this order",
+  and "Cancel my order".
+- Route general informational questions about policies and procedures
+  to RAG. Examples: "What is your return policy?" and
+  "How many days do I have to return an item?"
+- If the user refers to "this order" or "that item", use the
+  conversation entity context to resolve the reference.
+- A question like "Can I return this order?" is action-oriented.
+  Do not answer it only with a general FAQ when the user appears
+  to be requesting an order-specific operation.
+- If required information is missing, route to MCP so the assistant
+  can ask for it. Never invent identifiers or tool results.
+
+If the relevant entity cannot be determined safely, ask for
+clarification.
 """
 
 
@@ -610,6 +688,18 @@ async def initialize_mcp():
 
     MCP_TOOLS = await MCP_CLIENT.get_tools()
 
+    for tool in MCP_TOOLS:
+        if tool.name in {
+            "get_order_status",
+            "process_return",
+            "track_package",
+        }:
+            print(f"\n{'=' * 60}")
+            print(f"TOOL: {tool.name}")
+            print("Description:", tool.description)
+            print("Arguments schema:", getattr(tool, "args_schema", None))
+            print("Arguments:", getattr(tool, "args", None))
+
     elapsed = time.perf_counter() - start
 
     print(f"MCP get_tools(): {elapsed:.3f}s")
@@ -648,13 +738,15 @@ async def initialize_mcp():
 # ADD USER MESSAGE
 # ============================================================
 
+
 async def add_message_node(state: State):
+    context_update = update_entity_context(state)
 
     return {
-        "messages": [
-            HumanMessage(content=state["message"])
-        ]
+        "messages": [HumanMessage(content=state["message"])],
+        "entity_context": context_update["entity_context"],
     }
+
 
 
 # ============================================================
@@ -679,7 +771,8 @@ async def rag_node(state: State):
     # ========================================================
 
     identifier_pattern = (
-        r"\b(?:ORD-?\d+(?:-[A-Z0-9]+)?|CUST-?\d+)\b"
+        r"\b(?:ORD(?:ER)?-?\d+(?:-[A-Z0-9]+)?"
+        r"|CUST(?:OMER)?-?\d+)\b"
     )
 
     supplied_identifier = bool(
@@ -711,7 +804,7 @@ async def rag_node(state: State):
     # RESUME A PENDING MCP TASK WHEN AN ID IS PROVIDED
     # ========================================================
 
-    if has_pending_task and supplied_identifier:
+    if has_pending_task and supplied_identifier and identifier_only_message:
 
         combined_mcp_query = (
             f"{pending_query}\n"
@@ -772,9 +865,12 @@ async def rag_node(state: State):
     if not faq_candidates_text:
         faq_candidates_text = "No relevant FAQ candidates found."
 
+    entity_context = state.get("entity_context") or {}
+
     judge_prompt = RAG_JUDGE_PROMPT.format(
         query=query,
-        faq_candidates=faq_candidates_text
+        faq_candidates=faq_candidates_text,
+        entity_context=json.dumps(entity_context),
     )
 
     # ========================================================
@@ -878,9 +974,17 @@ async def rag_node(state: State):
 
     route = route.upper()
 
+    use_rag = decision.get("use_rag", False)
     rag_indices = decision.get("rag_indices", [])
     mcp_query = decision.get("mcp_query", "")
     rag_answer = decision.get("answer", "")
+
+    if route == "GENERAL":
+        rag_indices = []
+        mcp_query = ""
+    elif not use_rag:
+        rag_indices = []
+        rag_answer = ""
 
     # Invalid field types should not accidentally trigger MCP.
     if (
@@ -1118,7 +1222,13 @@ async def mcp_agent_node(state: State):
             if answer
         )
 
-        user_content = f"MCP QUERY:\n{mcp_query}"
+        entity_context = state.get("entity_context") or {}
+
+        user_content = (
+            f"CONVERSATION ENTITY CONTEXT:\n"
+            f"{json.dumps(entity_context)}\n\n"
+            f"MCP QUERY:\n{mcp_query}"
+        )
 
         if rag_context:
             user_content = (
@@ -1150,7 +1260,14 @@ async def mcp_agent_node(state: State):
             if answer
         )
 
-        user_content = state["mcp_query"] or state["message"]
+        entity_context = state.get("entity_context") or {}
+        mcp_query = state["mcp_query"] or state["message"]
+
+        user_content = (
+            f"CONVERSATION ENTITY CONTEXT:\n"
+            f"{json.dumps(entity_context)}\n\n"
+            f"MCP QUERY:\n{mcp_query}"
+        )
 
         if rag_context:
             user_content = (
@@ -1205,6 +1322,7 @@ def validate_tool_calls(state: State):
     customer_id_tools = {
         "get_order_status",
         "track_package",
+        "process_return",
     }
 
     user_text = " ".join(
@@ -1214,10 +1332,13 @@ def validate_tool_calls(state: State):
         and isinstance(msg.content, str)
     )
 
+    
+    entity_context = state.get("entity_context") or {}
+
     supplied_customer_ids = {
         normalize_identifier(cid)
         for cid in re.findall(
-            r"\bCUST-?\d+\b",
+            r"\b(?:CUST(?:OMER)?-?\d+)\b",
             user_text,
             flags=re.IGNORECASE,
         )
@@ -1226,44 +1347,85 @@ def validate_tool_calls(state: State):
     supplied_order_ids = {
         normalize_identifier(oid)
         for oid in re.findall(
-            r"\bORD-?\d+(?:-[A-Z0-9]+)?\b",
+            r"\b(?:ORD(?:ER)?-?\d+(?:-[A-Z0-9]+)?)\b",
             user_text,
             flags=re.IGNORECASE,
         )
     }
 
+    # Include the active conversation identifiers.
+    context_customer_id = entity_context.get("customer_id")
+    context_order_id = entity_context.get("order_id")
+
+    if isinstance(context_customer_id, str) and context_customer_id:
+        supplied_customer_ids.add(
+            normalize_identifier(context_customer_id)
+        )
+
+    if isinstance(context_order_id, str) and context_order_id:
+        supplied_order_ids.add(
+            normalize_identifier(context_order_id)
+        )
+
+
     for call in last_message.tool_calls:
         args = call.get("args", {})
+        tool_name = call.get("name", "")
 
-        # Validate the order ID if the tool uses one.
+        # Use active conversation context when an ID is omitted.
+        if tool_name in {
+            "get_order_status",
+            "track_package",
+            "process_return",
+        }:
+            entity_context = state.get("entity_context") or {}
+
+            if not args.get("order_id") and entity_context.get("order_id"):
+                args["order_id"] = entity_context["order_id"]
+
+            if not args.get("customer_id") and entity_context.get("customer_id"):
+                args["customer_id"] = entity_context["customer_id"]
+
+        # Validate the order ID against the active conversation context.
         order_id = args.get("order_id")
 
-        if order_id is not None:
-            if not isinstance(order_id, str):
-                print("BLOCKED: Invalid order ID type")
+        if tool_name in {
+            "get_order_status",
+            "track_package",
+            "process_return",
+        }:
+            context_order_id = entity_context.get("order_id")
+
+            if not isinstance(order_id, str) or not context_order_id:
+                print("BLOCKED: Missing order ID or active order context")
                 return "blocked"
 
             normalized_order_id = normalize_identifier(order_id)
+            normalized_context_order_id = normalize_identifier(context_order_id)
 
-            if normalized_order_id not in supplied_order_ids:
-                print("BLOCKED: Order ID was not supplied by the user")
+            if normalized_order_id != normalized_context_order_id:
+                print("BLOCKED: Order ID does not match the active order")
                 return "blocked"
 
             args["order_id"] = normalized_order_id
 
-        # Preserve your existing customer ID safeguard.
-        if call["name"] in customer_id_tools:
-            customer_id = args.get("customer_id", "")
+        # Validate the customer ID against the active conversation context.
+        if tool_name in customer_id_tools:
+            customer_id = args.get("customer_id")
+            context_customer_id = entity_context.get("customer_id")
 
-            if (
-                not isinstance(customer_id, str)
-                or normalize_identifier(customer_id) not in supplied_customer_ids
-            ):
-                print(
-                    f"\n❌ BLOCKED: customer_id was not "
-                    f"provided by the user for {call['name']}"
-                )
+            if not isinstance(customer_id, str) or not context_customer_id:
+                print("BLOCKED: Missing customer ID or active customer context")
                 return "blocked"
+
+            normalized_customer_id = normalize_identifier(customer_id)
+            normalized_context_customer_id = normalize_identifier(context_customer_id)
+
+            if normalized_customer_id != normalized_context_customer_id:
+                print("BLOCKED: Customer ID does not match the active customer")
+                return "blocked"
+
+            args["customer_id"] = normalized_customer_id
 
     return "mcp_tools"
 
