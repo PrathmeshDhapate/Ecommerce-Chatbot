@@ -6,9 +6,12 @@ import asyncio
 import json
 import re
 import os
+import uuid
+from livekit import api
 
 
 from fastapi.responses import StreamingResponse
+from fastapi import HTTPException
 from contextlib import suppress
 from fastapi import WebSocket, WebSocketDisconnect
 from google.genai import types
@@ -125,6 +128,43 @@ def home():
     return {
         "message": "Backend is running"
     }
+
+@app.post("/livekit/token")
+async def create_livekit_token():
+    livekit_url = os.getenv("LIVEKIT_URL")
+    api_key = os.getenv("LIVEKIT_API_KEY")
+    api_secret = os.getenv("LIVEKIT_API_SECRET")
+
+    if not all([livekit_url, api_key, api_secret]):
+        raise HTTPException(
+            status_code=500,
+            detail="LiveKit configuration is missing",
+        )
+
+    room_name = f"voice-{uuid.uuid4().hex[:12]}"
+    participant_identity = f"user-{uuid.uuid4().hex[:8]}"
+
+    token = (
+        api.AccessToken(api_key, api_secret)
+        .with_identity(participant_identity)
+        .with_name("Voice User")
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=room_name,
+                can_publish=True,
+                can_subscribe=True,
+            )
+        )
+    )
+
+    return {
+        "serverUrl": livekit_url,
+        "roomName": room_name,
+        "participantIdentity": participant_identity,
+        "participantToken": token.to_jwt(),
+    }
+
 
 
 # ============================================================
@@ -1067,14 +1107,15 @@ async def chat_stream(request: ChatRequest):
             if final_response and not streamed_text:
                 streamed_text = final_response
 
-            print("\nDEBUG FINAL RESPONSE:", repr(final_response))
-            print("DEBUG STREAMED TEXT:", repr(streamed_text))
-            print("DEBUG DONE ANSWER:", repr(final_response or streamed_text))
-
-            yield send_event(
+                yield send_event(
                     "token",
                     {"text": final_response}
                 )
+
+            print("\nDEBUG FINAL RESPONSE:", repr(final_response))
+            print("DEBUG STREAMED TEXT:", repr(streamed_text))
+            print("DEBUG DONE ANSWER:", repr(final_response or streamed_text))
+            
 
             # 4. Tell the frontend that the response is complete
             yield send_event(
