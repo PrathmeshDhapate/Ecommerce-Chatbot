@@ -1,8 +1,8 @@
 
 import asyncio
+import json
 import logging
 import os
-import json
 
 from dotenv import load_dotenv
 from livekit import agents
@@ -12,7 +12,6 @@ from livekit.plugins import cartesia, silero
 from graph import graph, initialize_mcp
 
 
-# Load the .env located beside this file.
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 logging.basicConfig(level=logging.INFO)
@@ -31,7 +30,10 @@ async def entrypoint(ctx: agents.JobContext):
 
     logger.info("Connected to room: %s", ctx.room.name)
 
-    async def send_voice_event(payload: dict):
+    async def send_voice_event(event_type: str, **data):
+        """Send a structured event from the worker to the frontend."""
+        payload = {"type": event_type, **data}
+
         try:
             await ctx.room.local_participant.publish_data(
                 json.dumps(payload).encode("utf-8"),
@@ -41,10 +43,11 @@ async def entrypoint(ctx: agents.JobContext):
         except Exception:
             logger.exception("Failed to publish voice event")
 
+    async def send_status(value: str):
+        await send_voice_event("status", value=value)
+
     session = AgentSession(
-        stt=inference.STT(
-            model="google/gemini-3.5-transcribe-live",
-        ),
+        stt=inference.STT(model="google/gemini-3.5-transcribe-live"),
         vad=silero.VAD.load(),
         tts=cartesia.TTS(
             api_key=os.getenv("CARTESIA_API_KEY"),
@@ -61,14 +64,8 @@ async def entrypoint(ctx: agents.JobContext):
     async def process_turn(user_text: str):
         async with turn_lock:
             try:
-                await send_voice_event({
-                    "type": "transcript",
-                    "text": user_text,
-                })
-                await send_voice_event({
-                    "type": "status",
-                    "value": "thinking",
-                })
+                await send_voice_event("transcript", text=user_text)
+                await send_status("thinking")
 
                 logger.info("Processing transcript: %s", user_text)
 
@@ -87,34 +84,24 @@ async def entrypoint(ctx: agents.JobContext):
                 )
 
                 answer = (result.get("response") or "").strip()
+
                 if not answer:
                     answer = (
-                        "Sorry, I couldn't get a response. "
-                        "Please try again."
+                        "Sorry, I couldn't get a response. Please try again."
                     )
 
                 logger.info("Graph response: %s", answer)
 
-                await send_voice_event({
-                    "type": "answer",
-                    "text": answer,
-                })
-                await send_voice_event({
-                    "type": "status",
-                    "value": "speaking",
-                })
+                await send_voice_event("answer", text=answer)
+                await send_status("speaking")
 
-                # Do not attempt playback if the session has stopped.
                 speech_handle = await session.say(
                     answer,
                     allow_interruptions=False,
                 )
                 await speech_handle.wait_for_playout()
 
-                await send_voice_event({
-                    "type": "status",
-                    "value": "listening",
-                })
+                await send_status("listening")
                 logger.info("Response playback finished")
 
             except asyncio.CancelledError:
@@ -123,13 +110,7 @@ async def entrypoint(ctx: agents.JobContext):
 
             except Exception:
                 logger.exception("Voice turn failed")
-
-                # Avoid a second failure if the session is no longer running.
-                # Send the error status to the frontend instead.
-                await send_voice_event({
-                    "type": "status",
-                    "value": "error",
-                })
+                await send_status("error")
 
     @session.on("user_input_transcribed")
     def on_transcript(event):
@@ -142,21 +123,15 @@ async def entrypoint(ctx: agents.JobContext):
             user_text,
         )
 
-        
         if not user_text:
             return
 
-        # Send partial text to the frontend while the user is speaking.
         if not event.is_final:
             asyncio.create_task(
-                send_voice_event({
-                    "type": "interim_transcript",
-                    "text": user_text,
-                })
+                send_voice_event("interim_transcript", text=user_text)
             )
             return
 
-        # Process only completed utterances.
         if event.item_id is not None:
             if event.item_id in processed_item_ids:
                 logger.info(

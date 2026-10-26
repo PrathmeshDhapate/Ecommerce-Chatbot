@@ -1,9 +1,9 @@
+
 import { useRef, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000";
-const WS_URL = "ws://127.0.0.1:8000";
 
 function createId() {
   return crypto.randomUUID();
@@ -15,45 +15,23 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
-  const [audioPlaying, setAudioPlaying] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [stoppingVoice, setStoppingVoice] = useState(false);
 
   const [threadId] = useState(() => crypto.randomUUID());
 
-  const socketRef = useRef(null);
-  const streamRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const playbackAudioContextRef = useRef(null);
-  const sourceRef = useRef(null);
-  const processorRef = useRef(null);
-  const gainRef = useRef(null);
   const liveKitRoomRef = useRef(null);
   const liveKitAudioElementsRef = useRef([]);
-
-  const activeAudioSourcesRef = useRef(new Set());
-  const ttsFinishedRef = useRef(false);
-  const nextPlayTimeRef = useRef(0);
-  const audioQueueRef = useRef(Promise.resolve());
-  const playbackSampleRateRef = useRef(44100);
-
   const transcriptRef = useRef("");
   const voiceTurnRef = useRef({
     userId: null,
     assistantId: null,
   });
-  const liveKitTurnActiveRef = useRef(false);
 
-  const voiceStartedRef = useRef(false);
+  const liveKitTurnActiveRef = useRef(false);
+  const stopRequestedRef = useRef(false);
   const textRequestActiveRef = useRef(false);
 
-  const voiceTimingRef = useRef({
-    startedAt: 0,
-    firstChunkReceived: false,
-    firstPlaybackStarted: false,
-  });
-
-  // Update one specific message. Never assume the last message
-  // belongs to the request currently producing streamed text.
   function updateMessage(messageId, update) {
     if (!messageId) return;
 
@@ -78,824 +56,274 @@ function App() {
     updateMessage(voiceTurnRef.current.assistantId, update);
   }
 
-  // ==========================================================
-  // AUDIO CONVERSION: FLOAT32 -> PCM INT16
-  // ==========================================================
+  function createLiveKitVoiceTurn() {
+    const userId = createId();
+    const assistantId = createId();
 
-  function convertToPCM(input, inputSampleRate) {
-    const outputSampleRate = 16000;
-    const ratio = inputSampleRate / outputSampleRate;
-    const outputLength = Math.floor(input.length / ratio);
-    const downsampled = new Float32Array(outputLength);
+    voiceTurnRef.current = { userId, assistantId };
+    liveKitTurnActiveRef.current = true;
 
-    for (let i = 0; i < outputLength; i++) {
-      const start = Math.floor(i * ratio);
-      const end = Math.min(Math.floor((i + 1) * ratio), input.length);
-
-      let sum = 0;
-      let count = 0;
-
-      for (let j = start; j < end; j++) {
-        sum += input[j];
-        count++;
-      }
-
-      downsampled[i] = count > 0 ? sum / count : 0;
-    }
-
-    const pcm = new Int16Array(outputLength);
-
-    for (let i = 0; i < outputLength; i++) {
-      const sample = Math.max(-1, Math.min(1, downsampled[i]));
-      pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-    }
-
-    return pcm;
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: userId,
+        role: "user",
+        content: "Listening...",
+        status: "recording",
+      },
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        status: "idle",
+      },
+    ]);
   }
 
-  // ==========================================================
-  // CLEAN UP MICROPHONE
-  // ==========================================================
+  function removeRemoteAudioElements() {
+    liveKitAudioElementsRef.current.forEach((element) => {
+      element.pause();
+      element.srcObject = null;
+      element.remove();
+    });
 
-  async function cleanupMicrophone() {
-    if (processorRef.current) {
-      processorRef.current.onaudioprocess = null;
-
-      try {
-        processorRef.current.disconnect();
-      } catch {
-        // Already disconnected.
-      }
-
-      processorRef.current = null;
-    }
-
-    if (sourceRef.current) {
-      try {
-        sourceRef.current.disconnect();
-      } catch {
-        // Already disconnected.
-      }
-
-      sourceRef.current = null;
-    }
-
-    if (gainRef.current) {
-      try {
-        gainRef.current.disconnect();
-      } catch {
-        // Already disconnected.
-      }
-
-      gainRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      const context = audioContextRef.current;
-      audioContextRef.current = null;
-
-      if (context.state !== "closed") {
-        await context.close();
-      }
-    }
+    liveKitAudioElementsRef.current = [];
   }
 
-  // ==========================================================
-  // PLAY CARTESIA AUDIO
-  // ==========================================================
+  function resetVoiceState() {
+    liveKitRoomRef.current = null;
+    liveKitTurnActiveRef.current = false;
+    stopRequestedRef.current = false;
 
-  async function playAudioChunk(arrayBuffer) {
-    let audioContext = playbackAudioContextRef.current;
+    setRecording(false);
+    setLoading(false);
+    setSpeaking(false);
+    setStoppingVoice(false);
+    setLiveTranscript("");
 
-    if (!audioContext || audioContext.state === "closed") {
-      audioContext = new AudioContext();
-      playbackAudioContextRef.current = audioContext;
-    }
-
-    if (audioContext.state === "suspended") {
-      await audioContext.resume();
-    }
-
-    const pcm = new Int16Array(arrayBuffer);
-    if (pcm.length === 0) return;
-
-    const audioBuffer = audioContext.createBuffer(
-      1,
-      pcm.length,
-      playbackSampleRateRef.current,
-    );
-
-    const channel = audioBuffer.getChannelData(0);
-
-    for (let i = 0; i < pcm.length; i++) {
-      channel[i] = pcm[i] / (pcm[i] < 0 ? 32768 : 32767);
-    }
-
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
-
-    const startAt = Math.max(
-      audioContext.currentTime + 0.02,
-      nextPlayTimeRef.current,
-    );
-
-    activeAudioSourcesRef.current.add(source);
-
-    source.onended = () => {
-      activeAudioSourcesRef.current.delete(source);
-
-      if (ttsFinishedRef.current && activeAudioSourcesRef.current.size === 0) {
-        setSpeaking(false);
-        setAudioPlaying(false);
-      }
-    };
-
-    source.start(startAt);
-
-    const timing = voiceTimingRef.current;
-
-    if (!timing.firstPlaybackStarted) {
-      timing.firstPlaybackStarted = true;
-
-      const delayMs = Math.max(0, (startAt - audioContext.currentTime) * 1000);
-
-      console.log(
-        `First chunk scheduled for playback: ${(
-          (performance.now() - timing.startedAt + delayMs) /
-          1000
-        ).toFixed(3)} seconds after tts_start`,
-      );
-    }
-
-    nextPlayTimeRef.current = startAt + audioBuffer.duration;
-    setAudioPlaying(true);
+    transcriptRef.current = "";
+    removeRemoteAudioElements();
   }
 
-  // ==========================================================
-  // HANDLE VOICE WEBSOCKET EVENTS
-  // ==========================================================
+  async function disconnectLiveKitRoom() {
+    const room = liveKitRoomRef.current;
 
-  function handleVoiceMessage(event) {
-    // Binary audio chunk.
-    if (event.data instanceof ArrayBuffer) {
-      const timing = voiceTimingRef.current;
+    liveKitRoomRef.current = null;
 
-      if (!timing.firstChunkReceived) {
-        timing.firstChunkReceived = true;
+    if (room) {
+      await room.disconnect();
+    }
 
-        console.log(
-          `First audio chunk received: ${(
-            (performance.now() - timing.startedAt) /
-            1000
-          ).toFixed(3)} seconds after tts_start`,
-        );
+    resetVoiceState();
+  }
+
+  async function startLiveKitVoice() {
+    if (liveKitRoomRef.current || stoppingVoice) return;
+
+    setLiveTranscript("");
+    transcriptRef.current = "";
+    stopRequestedRef.current = false;
+
+    createLiveKitVoiceTurn();
+
+    let room;
+
+    try {
+      setLoading(true);
+
+      const response = await fetch(`${API_URL}/livekit/token`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Token request failed: ${response.status}`);
       }
 
-      audioQueueRef.current = audioQueueRef.current
-        .then(() => playAudioChunk(event.data))
-        .catch((error) => {
-          console.error("Audio playback failed:", error);
+      const { serverUrl, participantToken } = await response.json();
+
+      room = new Room({
+        adaptiveStream: true,
+        dynacast: true,
+      });
+
+      liveKitRoomRef.current = room;
+
+      room.on(RoomEvent.TrackSubscribed, (track) => {
+        if (track.kind !== Track.Kind.Audio) return;
+
+        const audioElement = track.attach();
+        audioElement.autoplay = true;
+        document.body.appendChild(audioElement);
+
+        liveKitAudioElementsRef.current.push(audioElement);
+
+        audioElement.play().catch((error) => {
+          console.warn("Could not autoplay remote audio:", error);
         });
-
-      return;
-    }
-
-    let data;
-
-    try {
-      data = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-
-    if (data.type === "ready") {
-      // The ready event is handled by the ready promise below.
-      return;
-    }
-
-    if (data.type === "tts_start") {
-      playbackSampleRateRef.current = data.sample_rate || 44100;
-
-      voiceTimingRef.current = {
-        startedAt: performance.now(),
-        firstChunkReceived: false,
-        firstPlaybackStarted: false,
-      };
-
-      console.log("Cartesia TTS started");
-
-      setSpeaking(true);
-      setAudioPlaying(false);
-      nextPlayTimeRef.current = 0;
-      ttsFinishedRef.current = false;
-      return;
-    }
-
-    if (data.type === "tts_end") {
-      console.log(
-        `Backend finished sending TTS: ${(
-          (performance.now() - voiceTimingRef.current.startedAt) /
-          1000
-        ).toFixed(3)} seconds after tts_start`,
-      );
-
-      audioQueueRef.current = audioQueueRef.current.then(() => {
-        ttsFinishedRef.current = true;
-
-        if (activeAudioSourcesRef.current.size === 0) {
-          setSpeaking(false);
-          setAudioPlaying(false);
-        }
       });
 
-      return;
-    }
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        track.detach().forEach((element) => {
+          element.pause();
+          element.srcObject = null;
+          element.remove();
 
-    if (data.type === "tts_error") {
-      console.error("TTS error:", data.message);
-      setSpeaking(false);
-      return;
-    }
-
-    // Live transcription updates the existing user message.
-    if (data.type === "interim") {
-      const text = data.text || "";
-
-      transcriptRef.current = text;
-      setLiveTranscript(text);
-
-      updateVoiceUserMessage(text || "Listening...");
-      return;
-    }
-
-    // Final transcription stays visible after Stop is clicked.
-    if (data.type === "final") {
-      const text = (data.text || "").trim();
-
-      if (text) {
-        transcriptRef.current = text;
-        setLiveTranscript(text);
-        updateVoiceUserMessage(text);
-      }
-
-      return;
-    }
-
-    // Stream answer chunks into this voice turn's assistant message.
-    if (data.type === "answer_chunk") {
-      const assistantId = voiceTurnRef.current.assistantId;
-
-      updateMessage(assistantId, (item) => ({
-        ...item,
-        content: (item.content || "") + (data.text || ""),
-        status: "streaming",
-      }));
-
-      return;
-    }
-
-    // Final answer replaces the streamed draft, avoiding duplication.
-    if (data.type === "answer") {
-      const transcript = (
-        data.transcription ||
-        transcriptRef.current ||
-        ""
-      ).trim();
-
-      if (transcript) {
-        transcriptRef.current = transcript;
-        updateVoiceUserMessage(transcript);
-      }
-
-      updateVoiceAssistantMessage({
-        content: data.answer || "",
-        status: "complete",
+          liveKitAudioElementsRef.current =
+            liveKitAudioElementsRef.current.filter(
+              (item) => item !== element,
+            );
+        });
       });
 
-      setLiveTranscript("");
-      setLoading(false);
-      voiceStartedRef.current = false;
-      return;
-    }
-
-    if (data.type === "error") {
-      updateVoiceAssistantMessage({
-        content:
-          data.message || "Sorry, something went wrong. Please try again.",
-        status: "complete",
-      });
-
-      setLoading(false);
-      setRecording(false);
-      setLiveTranscript("");
-      voiceStartedRef.current = false;
-    }
-  }
-
-  // ==========================================================
-  // START VOICE INPUT
-  // ==========================================================
-
-  async function startRecording() {
-    if (
-      recording ||
-      loading ||
-      speaking ||
-      audioPlaying ||
-      textRequestActiveRef.current ||
-      voiceStartedRef.current
-    ) {
-      return;
-    }
-
-    let userId;
-    let assistantId;
-
-    try {
-      transcriptRef.current = "";
-      setLiveTranscript("");
-
-      if (
-        !playbackAudioContextRef.current ||
-        playbackAudioContextRef.current.state === "closed"
-      ) {
-        playbackAudioContextRef.current = new AudioContext();
-      }
-
-      await playbackAudioContextRef.current.resume();
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-
-      streamRef.current = stream;
-
-      const socket = new WebSocket(
-        `${WS_URL}/voice-stream?thread_id=${encodeURIComponent(threadId)}`,
-      );
-
-      socket.binaryType = "arraybuffer";
-      socketRef.current = socket;
-
-      let resolveReady;
-      let rejectReady;
-      let readyReceived = false;
-
-      const readyPromise = new Promise((resolve, reject) => {
-        resolveReady = resolve;
-        rejectReady = reject;
-      });
-
-      socket.onmessage = (event) => {
-        if (typeof event.data !== "string") {
-          handleVoiceMessage(event);
-          return;
-        }
-
-        let data;
-
-        try {
-          data = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-
-        if (data.type === "ready") {
-          readyReceived = true;
-          resolveReady();
-          return;
-        }
-
-        handleVoiceMessage(event);
-      };
-
-      socket.onerror = () => {
-        if (!readyReceived) {
-          rejectReady(new Error("WebSocket connection failed."));
-        }
-      };
-
-      socket.onclose = () => {
-        setRecording(false);
-
-        // Do not leave a thinking indicator stuck if the connection closes.
-        if (voiceStartedRef.current) {
-          updateVoiceAssistantMessage((item) => ({
-            ...item,
-            content:
-              item.content ||
-              "The connection closed before the response was completed. Please try again.",
-            status: "complete",
-          }));
-
-          setLoading(false);
-          voiceStartedRef.current = false;
-        }
-      };
-
-      await new Promise((resolve, reject) => {
-        socket.addEventListener("open", resolve, { once: true });
-        socket.addEventListener(
-          "error",
-          () => reject(new Error("Could not connect to FastAPI.")),
-          { once: true },
-        );
-      });
-
-      await readyPromise;
-
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      await audioContext.resume();
-
-      const source = audioContext.createMediaStreamSource(stream);
-      sourceRef.current = source;
-
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      const silentGain = audioContext.createGain();
-      silentGain.gain.value = 0;
-      gainRef.current = silentGain;
-
-      processor.onaudioprocess = (event) => {
-        if (socket.readyState !== WebSocket.OPEN) return;
-
-        const input = event.inputBuffer.getChannelData(0);
-        const pcm = convertToPCM(input, audioContext.sampleRate);
-
-        if (pcm.length > 0) {
-          socket.send(pcm.buffer);
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(silentGain);
-      silentGain.connect(audioContext.destination);
-
-      // Create a distinct conversation turn for this voice request.
-      userId = createId();
-      assistantId = createId();
-
-      voiceTurnRef.current = { userId, assistantId };
-      voiceStartedRef.current = true;
-
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: userId,
-          role: "user",
-          content: "Listening...",
-          status: "recording",
-        },
-        {
-          id: assistantId,
-          role: "assistant",
-          content: "",
-          status: "idle",
-        },
-      ]);
-
-      setRecording(true);
-    } catch (error) {
-      console.error("Could not start voice streaming:", error);
-
-      await cleanupMicrophone();
-
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
-
-      setRecording(false);
-      setLoading(false);
-      voiceStartedRef.current = false;
-
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: createId(),
-          role: "assistant",
-          content:
-            "Could not start voice input. Please check microphone permission and backend connection.",
-          status: "complete",
-        },
-      ]);
-    }
-  }
-
-  
-
-async function startLiveKitVoice() {
-  if (liveKitRoomRef.current) {
-    return;
-  }
-
-  // Clear stale transcript from a previous session.
-  setLiveTranscript("");
-  transcriptRef.current = "";
-  createLiveKitVoiceTurn();
-
-  let room;
-
-  try {
-    setLoading(true);
-
-    const response = await fetch(`${API_URL}/livekit/token`, {
-      method: "POST",
-    });
-
-    if (!response.ok) {
-      throw new Error(`Token request failed: ${response.status}`);
-    }
-
-    const { serverUrl, participantToken } = await response.json();
-
-    room = new Room({
-      adaptiveStream: true,
-      dynacast: true,
-    });
-
-    liveKitRoomRef.current = room;
-
-    room.on(RoomEvent.TrackSubscribed, (track) => {
-      if (track.kind !== Track.Kind.Audio) return;
-
-      const audioElement = track.attach();
-      audioElement.autoplay = true;
-      document.body.appendChild(audioElement);
-
-      liveKitAudioElementsRef.current.push(audioElement);
-    });
-
-    room.on(RoomEvent.TrackUnsubscribed, (track) => {
-      track.detach().forEach((element) => {
-        element.remove();
-
-        liveKitAudioElementsRef.current =
-          liveKitAudioElementsRef.current.filter(
-            (item) => item !== element
-          );
-      });
-    });
-
-    room.on(
-      RoomEvent.DataReceived,
-      async (data, participant, kind, topic) => {
+      room.on(RoomEvent.DataReceived, async (data, participant, kind, topic) => {
         if (topic !== "voice-events") return;
 
         try {
-          const event = JSON.parse(
-            new TextDecoder().decode(data)
-          );
+          const event = JSON.parse(new TextDecoder().decode(data));
 
-          // Interim and final transcripts.
-          
+           console.log("LiveKit voice event:", event);
+
           if (
             event.type === "interim_transcript" ||
             event.type === "transcript"
           ) {
-            // Create a fresh message pair if the previous turn has finished.
             if (!liveKitTurnActiveRef.current) {
               createLiveKitVoiceTurn();
             }
 
             const text = event.text || "";
 
-            setLiveTranscript(text);
             transcriptRef.current = text;
-
+            setLiveTranscript(text);
             updateVoiceUserMessage(text);
           }
 
-
           if (event.type === "status") {
-            if (
-              event.value === "thinking" ||
-              event.value === "speaking"
-            ) {
-              setLoading(event.value === "thinking");
-              setSpeaking(event.value === "speaking");
-
-              await room.localParticipant.setMicrophoneEnabled(false);
+            if (event.value === "thinking") {
+              setLoading(true);
+              setSpeaking(false);
             }
 
-            
+            if (event.value === "speaking") {
+              setLoading(false);
+              setSpeaking(true);
+            }
+
             if (event.value === "listening") {
               setLoading(false);
               setSpeaking(false);
               setLiveTranscript("");
 
+              if (stopRequestedRef.current) {
+                await disconnectLiveKitRoom();
+                return;
+              }
+
               await room.localParticipant.setMicrophoneEnabled(true);
+              setRecording(true);
             }
 
+            if (event.value === "error") {
+              updateVoiceAssistantMessage({
+                content: "Sorry, something went wrong. Please try again.",
+                status: "complete",
+              });
+
+              setLoading(false);
+              setSpeaking(false);
+              liveKitTurnActiveRef.current = false;
+
+              if (stopRequestedRef.current) {
+                await disconnectLiveKitRoom();
+              } else {
+                await room.localParticipant.setMicrophoneEnabled(true);
+                setRecording(true);
+              }
+            }
           }
 
-          // Show the assistant's answer in the existing chat UI.          
           if (event.type === "answer") {
             updateVoiceAssistantMessage({
-              content: event.text || "I couldn't generate a response. Please try again.",
+              content:
+                event.text ||
+                "I couldn't generate a response. Please try again.",
               status: "complete",
             });
 
             liveKitTurnActiveRef.current = false;
             setLoading(false);
-            setSpeaking(false);
           }
 
-          
           if (event.type === "error") {
             updateVoiceAssistantMessage({
-              content: event.message || "Sorry, something went wrong. Please try again.",
+              content:
+                event.message ||
+                "Sorry, something went wrong. Please try again.",
               status: "complete",
             });
 
             liveKitTurnActiveRef.current = false;
             setLoading(false);
             setSpeaking(false);
+
+            if (stopRequestedRef.current) {
+              await disconnectLiveKitRoom();
+            }
           }
-
-
         } catch (error) {
-          console.error(
-            "Could not process LiveKit event:",
-            error
-          );
+          console.error("Could not process LiveKit event:", error);
         }
+      });
+
+      room.on(RoomEvent.Disconnected, () => {
+        resetVoiceState();
+      });
+
+      await room.connect(serverUrl, participantToken);
+      await room.startAudio();
+      await room.localParticipant.setMicrophoneEnabled(true);
+
+      setRecording(true);
+      setLoading(false);
+
+      console.log("Connected to LiveKit room:", room.name);
+    } catch (error) {
+      console.error("LiveKit connection failed:", error);
+
+      if (room) {
+        await room.disconnect().catch(() => {});
       }
-    );
 
-    room.on(RoomEvent.Disconnected, () => {
-    liveKitRoomRef.current = null;
+      resetVoiceState();
 
-    // Reset voice-turn state.
-    liveKitTurnActiveRef.current = false;
-    voiceStartedRef.current = false;
+      updateVoiceAssistantMessage({
+        content: `Could not start voice: ${error.message}`,
+        status: "complete",
+      });
+    }
+  }
 
+  
+  async function stopLiveKitVoice() {
+    const room = liveKitRoomRef.current;
+
+    if (!room) return;
+
+    stopRequestedRef.current = true;
+    setStoppingVoice(true);
     setRecording(false);
     setLoading(false);
     setSpeaking(false);
-    setLiveTranscript("");
-    transcriptRef.current = "";
-  });
 
-    await room.connect(serverUrl, participantToken);
-    await room.startAudio();
-    await room.localParticipant.setMicrophoneEnabled(true);
-
-    setRecording(true);
-    setLoading(false);
-
-    console.log("Connected to LiveKit room:", room.name);
-  } catch (error) {
-  console.error("LiveKit connection failed:", error);
-
-  if (room) {
-    await room.disconnect().catch(() => {});
-  }
-
-  liveKitRoomRef.current = null;
-
-  liveKitTurnActiveRef.current = false;
-  voiceStartedRef.current = false;
-
-  updateVoiceUserMessage("Voice connection failed. Please try again.");
-  updateVoiceAssistantMessage({
-    content: "",
-    status: "idle",
-  });
-
-  setRecording(false);
-  setLoading(false);
-  setSpeaking(false);
-  setLiveTranscript("");
-  transcriptRef.current = "";
-
-  alert(`Could not start voice: ${error.message}`);
-}
-}
-
-
-
-function createLiveKitVoiceTurn() {
-  const userId = createId();
-  const assistantId = createId();
-
-  voiceTurnRef.current = { userId, assistantId };
-  liveKitTurnActiveRef.current = true;
-
-  setMessages((previous) => [
-    ...previous,
-    {
-      id: userId,
-      role: "user",
-      content: "Listening...",
-      status: "recording",
-    },
-    {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      status: "idle",
-    },
-  ]);
-}
-
-
-
-
-
-
-async function stopLiveKitVoice() {
-  const room = liveKitRoomRef.current;
-
-  // Preserve the latest transcript in the chat message.
-  const finalTranscript = transcriptRef.current || liveTranscript;
-
-  if (finalTranscript) {
-    updateVoiceUserMessage(finalTranscript);
-  }
-
-  // Mark the current voice turn as inactive.
-  liveKitTurnActiveRef.current = false;
-  voiceStartedRef.current = false;
-
-  // Disconnect the LiveKit room.
-  if (room) {
-    liveKitRoomRef.current = null;
-    await room.disconnect();
-  }
-
-  // Remove any remote audio elements.
-  liveKitAudioElementsRef.current.forEach((element) => {
-    element.pause();
-    element.srcObject = null;
-    element.remove();
-  });
-
-  liveKitAudioElementsRef.current = [];
-
-  setRecording(false);
-  setLoading(false);
-  setSpeaking(false);
-  setLiveTranscript("");
-  transcriptRef.current = "";
-}
-
-
-
-
-  // ==========================================================
-  // STOP VOICE INPUT
-  // ==========================================================
-
-  
-async function stopRecording() {
-  const room = liveKitRoomRef.current;
-
-  setRecording(false);
-  setLoading(false);
-  setSpeaking(false);
-
-  // Preserve the final transcript already displayed.
-  updateVoiceUserMessage(
-    transcriptRef.current || liveTranscript || "Voice message recorded"
-  );
-
-  await cleanupMicrophone();
-
-  // Disconnect the actual LiveKit room.
-  if (room) {
     try {
-      await room.localParticipant.setMicrophoneEnabled(false);
+      // Disconnect immediately instead of waiting for the response.
+      await disconnectLiveKitRoom();
     } catch (error) {
-      console.warn("Could not disable microphone:", error);
+      console.error("Could not stop the LiveKit session:", error);
+      resetVoiceState();
     }
-
-    await room.disconnect();
   }
 
-  // Reset connection state.
-  liveKitRoomRef.current = null;
-  setRecording(false);
-  setLoading(false);
-  setSpeaking(false);
-}
-
-
-  // ==========================================================
-  // NORMAL TEXT CHAT - STREAMING
-  // ==========================================================
 
   async function sendMessage() {
     const userMessage = message.trim();
@@ -905,9 +333,8 @@ async function stopRecording() {
       loading ||
       recording ||
       speaking ||
-      audioPlaying ||
-      textRequestActiveRef.current ||
-      voiceStartedRef.current
+      stoppingVoice ||
+      textRequestActiveRef.current
     ) {
       return;
     }
@@ -996,14 +423,6 @@ async function stopRecording() {
             );
           }
 
-          console.log(
-            `Token ${tokenCount} received: ${(
-              (performance.now() - streamStartedAt) /
-              1000
-            ).toFixed(3)} seconds`,
-            payload.text,
-          );
-
           completeAnswer += payload.text;
 
           updateMessage(assistantId, {
@@ -1079,10 +498,6 @@ async function stopRecording() {
     }
   }
 
-  // ==========================================================
-  // UI
-  // ==========================================================
-
   return (
     <div className="app-shell">
       <main className="chat-container">
@@ -1107,15 +522,15 @@ async function stopRecording() {
               <div className="welcome-icon">✨</div>
               <h2>How can I help you today?</h2>
               <p>
-                Ask about orders, shipping, returns, products, and more. You can
-                also use the microphone to speak.
+                Ask about orders, shipping, returns, products, and more. You
+                can also use the microphone to speak.
               </p>
 
               <div className="suggestion-list">
                 <button
                   type="button"
                   onClick={() => setMessage("What is your return policy?")}
-                  disabled={loading || recording}
+                  disabled={loading || recording || stoppingVoice}
                 >
                   Return policy
                 </button>
@@ -1123,7 +538,7 @@ async function stopRecording() {
                 <button
                   type="button"
                   onClick={() => setMessage("How can I track my order?")}
-                  disabled={loading || recording}
+                  disabled={loading || recording || stoppingVoice}
                 >
                   Track an order
                 </button>
@@ -1131,7 +546,7 @@ async function stopRecording() {
                 <button
                   type="button"
                   onClick={() => setMessage("How long does shipping take?")}
-                  disabled={loading || recording}
+                  disabled={loading || recording || stoppingVoice}
                 >
                   Shipping information
                 </button>
@@ -1204,6 +619,12 @@ async function stopRecording() {
             </div>
           )}
 
+          {stoppingVoice && (
+            <div className="recording-status">
+              Finishing your request. Please wait for the assistant...
+            </div>
+          )}
+
           {speaking && (
             <div className="audio-status">
               <span className="audio-bars" aria-hidden="true">
@@ -1213,7 +634,7 @@ async function stopRecording() {
                 <i />
                 <i />
               </span>
-              {audioPlaying ? "Assistant is speaking..." : "Preparing audio..."}
+              Assistant is speaking...
             </div>
           )}
         </section>
@@ -1230,7 +651,9 @@ async function stopRecording() {
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               placeholder="Ask about orders, returns, shipping..."
-              disabled={loading || recording || speaking || audioPlaying}
+              disabled={
+                loading || recording || speaking || stoppingVoice
+              }
               aria-label="Type your message"
             />
 
@@ -1242,7 +665,7 @@ async function stopRecording() {
                 loading ||
                 recording ||
                 speaking ||
-                audioPlaying
+                stoppingVoice
               }
             >
               {loading ? "Waiting..." : "Send"}
@@ -1251,17 +674,17 @@ async function stopRecording() {
           </form>
 
           <div className="voice-controls">
-            {!recording ? (
+            {!recording && !stoppingVoice ? (
               <button
                 className="voice-button start-button"
                 type="button"
                 onClick={startLiveKitVoice}
-                disabled={loading || speaking || audioPlaying}
+                disabled={loading || speaking}
               >
                 <span aria-hidden="true">🎙️</span>
                 Start voice
               </button>
-            ) : (
+            ) : recording ? (
               <button
                 className="voice-button stop-button"
                 type="button"
@@ -1270,14 +693,24 @@ async function stopRecording() {
                 <span className="stop-square" />
                 Stop and send
               </button>
+            ) : (
+              <button
+                className="voice-button stop-button"
+                type="button"
+                disabled
+              >
+                Finishing...
+              </button>
             )}
 
             <span className="input-hint">
               {recording
                 ? "Your transcript stays visible after you stop."
-                : loading
-                  ? "Your assistant is working on your request."
-                  : "Type a message or use voice input."}
+                : stoppingVoice
+                  ? "Waiting for the assistant to finish."
+                  : loading
+                    ? "Your assistant is working on your request."
+                    : "Type a message or use voice input."}
             </span>
           </div>
         </footer>
