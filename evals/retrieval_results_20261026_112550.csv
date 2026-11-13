@@ -1,0 +1,176 @@
+﻿query_type,query,rank,retrieved_faq,similarity_score,threshold_accepted,expected_relevant,expected_faqs
+supported,Can I send a product back?,1,How do I return an item?,0.47556519508361816,True,True,How do I return an item? | What is your return policy?
+supported,Can I send a product back?,2,What is your return policy?,0.5094441771507263,True,True,How do I return an item? | What is your return policy?
+supported,Can I send a product back?,3,Can I cancel my order?,0.5457620620727539,True,False,How do I return an item? | What is your return policy?
+supported,Can I send a product back?,4,How do I cancel my order?,0.5566111207008362,True,False,How do I return an item? | What is your return policy?
+supported,Can I send a product back?,5,What is the warranty policy?,0.6619043350219727,False,False,How do I return an item? | What is your return policy?
+supported,How do I get a product returned?,1,How do I return an item?,0.46232911944389343,True,True,How do I return an item? | What is your return policy?
+supported,How do I get a product returned?,2,What is your return policy?,0.5356200933456421,True,True,How do I return an item? | What is your return policy?
+supported,How do I get a product returned?,3,How do I cancel my order?,0.5772846341133118,True,False,How do I return an item? | What is your return policy?
+supported,How do I get a product returned?,4,Can I cancel my order?,0.606236457824707,False,False,How do I return an item? | What is your return policy?
+supported,How do I get a product returned?,5,How should I care for my product?,0.66823810338974,False,False,How do I return an item? | What is your return policy?
+supported,How many business days until delivery?,1,When will my order arrive?,0.47469496726989746,True,True,How long does shipping take? | When will my order arrive?
+supported,How many business days until delivery?,2,How long does shipping take?,0.5148617625236511,True,True,How long does shipping take? | When will my order arrive?
+supported,How many business days until delivery?,3,Has my order been delivered?,0.605314314365387,False,False,How long does shipping take? | When will my order arrive?
+supported,How many business days until delivery?,4,How can I track my order?,0.6201137900352478,False,False,How long does shipping take? | When will my order arrive?
+supported,How many business days until delivery?,5,How can I check my order status?,0.6377344727516174,False,False,How long does shipping take? | When will my order arrive?
+supported,When should my package reach me?,1,When will my order arrive?,0.48367929458618164,True,True,How long does shipping take? | When will my order arrive?
+supported,When should my package reach me?,2,How long does shipping take?,0.5134319067001343,True,True,How long does shipping take? | When will my order arrive?
+supported,When should my package reach me?,3,Has my order been delivered?,0.5855461359024048,True,False,How long does shipping take? | When will my order arrive?
+supported,When should my package reach me?,4,How can I track my order?,0.5985842347145081,True,False,How long does shipping take? | When will my order arrive?
+supported,When should my package reach me?,5,Where can I find my tracking information?,0.6120126247406006,False,False,How long does shipping take? | When will my order arrive?
+supported,Do you accept credit cards?,1,Can I pay with a debit or credit card?,0.4589531719684601,True,True,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Do you accept credit cards?,2,What payment methods do you accept?,0.5550979375839233,True,True,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Do you accept credit cards?,3,Thank you,0.7766820192337036,False,False,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Do you accept credit cards?,4,What is your return policy?,0.7787284851074219,False,False,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Do you accept credit cards?,5,What is your loyalty program?,0.7804641723632812,False,False,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Can I use my bank card to pay?,1,Can I pay with a debit or credit card?,0.4685702323913574,True,True,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Can I use my bank card to pay?,2,What payment methods do you accept?,0.5869937539100647,True,True,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Can I use my bank card to pay?,3,Thank you,0.7899488806724548,False,False,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Can I use my bank card to pay?,4,How do I choose the right size?,0.803314208984375,False,False,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Can I use my bank card to pay?,5,Thanks for your help,0.8037606477737427,False,False,Can I pay with a debit or credit card? | What payment methods do you accept?
+supported,Where can I see my package tracking details?,1,Where can I find my tracking information?,0.4682815670967102,True,True,How can I track my order? | Where can I find my tracking information?
+supported,Where can I see my package tracking details?,2,How can I track my order?,0.5086897015571594,True,True,How can I track my order? | Where can I find my tracking information?
+supported,Where can I see my package tracking details?,3,How can I check my order status?,0.5579452514648438,True,False,How can I track my order? | Where can I find my tracking information?
+supported,Where can I see my package tracking details?,4,Has my order been delivered?,0.5644729137420654,True,False,How can I track my order? | Where can I find my tracking information?
+supported,Where can I see my package tracking details?,5,How long does shipping take?,0.6840179562568665,False,False,How can I track my order? | Where can I find my tracking information?
+supported,How do I find my parcel tracking details?,1,Where can I find my tracking information?,0.4815288782119751,True,True,How can I track my order? | Where can I find my tracking information?
+supported,How do I find my parcel tracking details?,2,How can I track my order?,0.5187288522720337,True,True,How can I track my order? | Where can I find my tracking information?
+supported,How do I find my parcel tracking details?,3,Has my order been delivered?,0.575684666633606,True,False,How can I track my order? | Where can I find my tracking information?
+supported,How do I find my parcel tracking details?,4,How can I check my order status?,0.5778526663780212,True,False,How can I track my order? | Where can I find my tracking information?
+supported,How do I find my parcel tracking details?,5,When will my order arrive?,0.6989871263504028,False,False,How can I track my order? | Where can I find my tracking information?
+supported,I want to stop my order.,1,How do I cancel my order?,0.44304725527763367,True,True,Can I cancel my order? | How do I cancel my order?
+supported,I want to stop my order.,2,Can I cancel my order?,0.45286741852760315,True,True,Can I cancel my order? | How do I cancel my order?
+supported,I want to stop my order.,3,How can I check my order status?,0.6352395415306091,False,False,Can I cancel my order? | How do I cancel my order?
+supported,I want to stop my order.,4,How do I return an item?,0.644810676574707,False,False,Can I cancel my order? | How do I cancel my order?
+supported,I want to stop my order.,5,How can I track my order?,0.6502386331558228,False,False,Can I cancel my order? | How do I cancel my order?
+supported,Can I undo an order I placed?,1,Can I cancel my order?,0.41523095965385437,True,True,Can I cancel my order? | How do I cancel my order?
+supported,Can I undo an order I placed?,2,How do I cancel my order?,0.42279383540153503,True,True,Can I cancel my order? | How do I cancel my order?
+supported,Can I undo an order I placed?,3,How do I return an item?,0.5961448550224304,True,False,Can I cancel my order? | How do I cancel my order?
+supported,Can I undo an order I placed?,4,What is your return policy?,0.6300125122070312,False,False,Can I cancel my order? | How do I cancel my order?
+supported,Can I undo an order I placed?,5,How can I check my order status?,0.668792188167572,False,False,Can I cancel my order? | How do I cancel my order?
+supported,Can you tell me my order status?,1,How can I check my order status?,0.4094776511192322,True,True,How can I check my order status?
+supported,Can you tell me my order status?,2,Has my order been delivered?,0.489231675863266,True,False,How can I check my order status?
+supported,Can you tell me my order status?,3,How can I track my order?,0.4977719783782959,True,False,How can I check my order status?
+supported,Can you tell me my order status?,4,Where can I find my tracking information?,0.5673322081565857,True,False,How can I check my order status?
+supported,Can you tell me my order status?,5,When will my order arrive?,0.6111447215080261,False,False,How can I check my order status?
+supported,Has my parcel already arrived?,1,Has my order been delivered?,0.5017577409744263,True,True,Has my order been delivered? | How can I check my order status?
+supported,Has my parcel already arrived?,2,Where can I find my tracking information?,0.5594539642333984,True,False,Has my order been delivered? | How can I check my order status?
+supported,Has my parcel already arrived?,3,How can I track my order?,0.5740160346031189,True,False,Has my order been delivered? | How can I check my order status?
+supported,Has my parcel already arrived?,4,How can I check my order status?,0.5891231894493103,True,True,Has my order been delivered? | How can I check my order status?
+supported,Has my parcel already arrived?,5,When will my order arrive?,0.6292678117752075,False,False,Has my order been delivered? | How can I check my order status?
+supported,How do I know which size to buy?,1,How do I choose the right size?,0.4294152855873108,True,True,How do I choose the right size? | Where can I find the size guide?
+supported,How do I know which size to buy?,2,Where can I find the size guide?,0.5132042169570923,True,True,How do I choose the right size? | Where can I find the size guide?
+supported,How do I know which size to buy?,3,How should I care for my product?,0.6805619597434998,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,How do I know which size to buy?,4,Thanks for your help,0.7182587385177612,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,How do I know which size to buy?,5,When will my order arrive?,0.7199618816375732,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Can you help me choose a size?,1,How do I choose the right size?,0.419569730758667,True,True,How do I choose the right size? | Where can I find the size guide?
+supported,Can you help me choose a size?,2,Where can I find the size guide?,0.5169245004653931,True,True,How do I choose the right size? | Where can I find the size guide?
+supported,Can you help me choose a size?,3,Thanks for your help,0.6552200317382812,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Can you help me choose a size?,4,What can you help me with?,0.6558247804641724,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Can you help me choose a size?,5,How should I care for my product?,0.697705864906311,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Is my product covered by a warranty?,1,How can I check my warranty coverage?,0.4684455990791321,True,True,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my product covered by a warranty?,2,What is the warranty policy?,0.4802188277244568,True,True,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my product covered by a warranty?,3,How should I care for my product?,0.5989998579025269,True,False,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my product covered by a warranty?,4,What is your return policy?,0.6548992395401001,False,False,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my product covered by a warranty?,5,How do I return an item?,0.6772319674491882,False,False,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my item still under warranty?,1,How can I check my warranty coverage?,0.493751585483551,True,True,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my item still under warranty?,2,What is the warranty policy?,0.5393854379653931,True,True,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my item still under warranty?,3,How should I care for my product?,0.6431487798690796,False,False,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my item still under warranty?,4,How do I return an item?,0.6475303769111633,False,False,How can I check my warranty coverage? | What is the warranty policy?
+supported,Is my item still under warranty?,5,What is your return policy?,0.6788191199302673,False,False,How can I check my warranty coverage? | What is the warranty policy?
+supported,I cannot sign in to my account.,1,I can't log in to my account. What should I do?,0.4789186716079712,True,True,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I cannot sign in to my account.,2,Can you help me with my account?,0.5613776445388794,True,True,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I cannot sign in to my account.,3,Thanks for your help,0.700408399105072,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I cannot sign in to my account.,4,What can you help me with?,0.7157557010650635,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I cannot sign in to my account.,5,Who are you?,0.7263699173927307,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I have trouble accessing my account.,1,I can't log in to my account. What should I do?,0.44495317339897156,True,True,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I have trouble accessing my account.,2,Can you help me with my account?,0.4989232122898102,True,True,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I have trouble accessing my account.,3,What can you help me with?,0.6588320732116699,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I have trouble accessing my account.,4,Thanks for your help,0.6835684776306152,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I have trouble accessing my account.,5,What services can you help me with?,0.6951514482498169,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,How should I maintain my item?,1,How should I care for my product?,0.4115065336227417,True,True,How should I care for my product?
+supported,How should I maintain my item?,2,What is the warranty policy?,0.6598412990570068,False,False,How should I care for my product?
+supported,How should I maintain my item?,3,How do I return an item?,0.6606080532073975,False,False,How should I care for my product?
+supported,How should I maintain my item?,4,How do I choose the right size?,0.6668244004249573,False,False,How should I care for my product?
+supported,How should I maintain my item?,5,How can I check my warranty coverage?,0.6764940619468689,False,False,How should I care for my product?
+supported,How do I look after my product?,1,How should I care for my product?,0.405132919549942,True,True,How should I care for my product?
+supported,How do I look after my product?,2,What is the warranty policy?,0.657891571521759,False,False,How should I care for my product?
+supported,How do I look after my product?,3,How can I check my warranty coverage?,0.684532105922699,False,False,How should I care for my product?
+supported,How do I look after my product?,4,How do I choose the right size?,0.6936620473861694,False,False,How should I care for my product?
+supported,How do I look after my product?,5,How do I return an item?,0.7000278234481812,False,False,How should I care for my product?
+supported,What can customer support help me with?,1,Can you help me with my account?,0.5371283888816833,True,False,What can you help me with? | What services can you help me with?
+supported,What can customer support help me with?,2,What can you help me with?,0.5441601872444153,True,True,What can you help me with? | What services can you help me with?
+supported,What can customer support help me with?,3,What services can you help me with?,0.5994241237640381,True,True,What can you help me with? | What services can you help me with?
+supported,What can customer support help me with?,4,I can't log in to my account. What should I do?,0.6650720834732056,False,False,What can you help me with? | What services can you help me with?
+supported,What can customer support help me with?,5,What is your return policy?,0.6845312714576721,False,False,What can you help me with? | What services can you help me with?
+supported,Tell me about yourself.,1,Who are you?,0.55194091796875,True,True,Are you a virtual assistant? | Who are you?
+supported,Tell me about yourself.,2,Hi,0.6167030334472656,False,False,Are you a virtual assistant? | Who are you?
+supported,Tell me about yourself.,3,What can you help me with?,0.6314891576766968,False,False,Are you a virtual assistant? | Who are you?
+supported,Tell me about yourself.,4,Are you a virtual assistant?,0.6430134773254395,False,True,Are you a virtual assistant? | Who are you?
+supported,Tell me about yourself.,5,What services can you help me with?,0.6896776556968689,False,False,Are you a virtual assistant? | Who are you?
+supported,Hey there!,1,Hi,0.5725563764572144,True,True,Good morning | Hi
+supported,Hey there!,2,What can you help me with?,0.6541726589202881,False,False,Good morning | Hi
+supported,Hey there!,3,Who are you?,0.6549935936927795,False,False,Good morning | Hi
+supported,Hey there!,4,Good morning,0.6858561038970947,False,True,Good morning | Hi
+supported,Hey there!,5,What services can you help me with?,0.6882601976394653,False,False,Good morning | Hi
+supported,I appreciate your assistance.,1,Thank you,0.4710566997528076,True,True,Thank you | Thanks for your help
+supported,I appreciate your assistance.,2,Thanks for your help,0.5138255953788757,True,True,Thank you | Thanks for your help
+supported,I appreciate your assistance.,3,What can you help me with?,0.6123462915420532,False,False,Thank you | Thanks for your help
+supported,I appreciate your assistance.,4,What services can you help me with?,0.672680139541626,False,False,Thank you | Thanks for your help
+supported,I appreciate your assistance.,5,Hi,0.6798239946365356,False,False,Thank you | Thanks for your help
+supported,"I'm leaving now, bye.",1,Goodbye,0.48925328254699707,True,True,Goodbye | See you later
+supported,"I'm leaving now, bye.",2,See you later,0.5110504627227783,True,True,Goodbye | See you later
+supported,"I'm leaving now, bye.",3,Hi,0.6470746397972107,False,False,Goodbye | See you later
+supported,"I'm leaving now, bye.",4,Thank you,0.6730504035949707,False,False,Goodbye | See you later
+supported,"I'm leaving now, bye.",5,Thanks for your help,0.7021552324295044,False,False,Goodbye | See you later
+supported,What happens if I need to cancel a purchase?,1,Can I cancel my order?,0.444630891084671,True,True,Can I cancel my order? | How do I cancel my order?
+supported,What happens if I need to cancel a purchase?,2,How do I cancel my order?,0.4593275189399719,True,True,Can I cancel my order? | How do I cancel my order?
+supported,What happens if I need to cancel a purchase?,3,What is your return policy?,0.5694692134857178,True,False,Can I cancel my order? | How do I cancel my order?
+supported,What happens if I need to cancel a purchase?,4,How do I return an item?,0.5774134397506714,True,False,Can I cancel my order? | How do I cancel my order?
+supported,What happens if I need to cancel a purchase?,5,What is the warranty policy?,0.7072558403015137,False,False,Can I cancel my order? | How do I cancel my order?
+supported,Where is the sizing chart?,1,Where can I find the size guide?,0.4575020670890808,True,True,How do I choose the right size? | Where can I find the size guide?
+supported,Where is the sizing chart?,2,How do I choose the right size?,0.515890896320343,True,True,How do I choose the right size? | Where can I find the size guide?
+supported,Where is the sizing chart?,3,How long does shipping take?,0.7058919072151184,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Where is the sizing chart?,4,How should I care for my product?,0.7059343457221985,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Where is the sizing chart?,5,When will my order arrive?,0.7081955075263977,False,False,How do I choose the right size? | Where can I find the size guide?
+supported,Does your loyalty scheme give me any benefits?,1,What is your loyalty program?,0.4785189926624298,True,True,What is your loyalty program?
+supported,Does your loyalty scheme give me any benefits?,2,Thank you,0.7479242086410522,False,False,What is your loyalty program?
+supported,Does your loyalty scheme give me any benefits?,3,How can I check my order status?,0.758188784122467,False,False,What is your loyalty program?
+supported,Does your loyalty scheme give me any benefits?,4,What can you help me with?,0.7695295810699463,False,False,What is your loyalty program?
+supported,Does your loyalty scheme give me any benefits?,5,Thanks for your help,0.7704081535339355,False,False,What is your loyalty program?
+supported,I forgot my password and can't get in.,1,I can't log in to my account. What should I do?,0.5167121887207031,True,True,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I forgot my password and can't get in.,2,Can you help me with my account?,0.6250331401824951,False,True,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I forgot my password and can't get in.,3,Thanks for your help,0.7130022048950195,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I forgot my password and can't get in.,4,What can you help me with?,0.7148945331573486,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,I forgot my password and can't get in.,5,Who are you?,0.7429033517837524,False,False,Can you help me with my account? | I can't log in to my account. What should I do?
+supported,How do I earn loyalty rewards?,1,What is your loyalty program?,0.4750201106071472,True,True,What is your loyalty program?
+supported,How do I earn loyalty rewards?,2,Thank you,0.7330827116966248,False,False,What is your loyalty program?
+supported,How do I earn loyalty rewards?,3,Thanks for your help,0.7574631571769714,False,False,What is your loyalty program?
+supported,How do I earn loyalty rewards?,4,How should I care for my product?,0.7576907277107239,False,False,What is your loyalty program?
+supported,How do I earn loyalty rewards?,5,How can I check my order status?,0.7716825008392334,False,False,What is your loyalty program?
+unsupported,Do you offer gift wrapping?,1,When will my order arrive?,0.7032755613327026,False,False,
+unsupported,Do you offer gift wrapping?,2,Thank you,0.7161436080932617,False,False,
+unsupported,Do you offer gift wrapping?,3,What is your return policy?,0.7202225923538208,False,False,
+unsupported,Do you offer gift wrapping?,4,How long does shipping take?,0.7276287078857422,False,False,
+unsupported,Do you offer gift wrapping?,5,How should I care for my product?,0.7343799471855164,False,False,
+unsupported,What is the weather today?,1,Good morning,0.7785227298736572,False,False,
+unsupported,What is the weather today?,2,Hi,0.7810407876968384,False,False,
+unsupported,What is the weather today?,3,How do I choose the right size?,0.799726665019989,False,False,
+unsupported,What is the weather today?,4,Thanks for your help,0.8039513826370239,False,False,
+unsupported,What is the weather today?,5,What can you help me with?,0.8069477081298828,False,False,
+unsupported,Can you recommend a movie?,1,What can you help me with?,0.7279802560806274,False,False,
+unsupported,Can you recommend a movie?,2,Thanks for your help,0.7368870973587036,False,False,
+unsupported,Can you recommend a movie?,3,Who are you?,0.7398209571838379,False,False,
+unsupported,Can you recommend a movie?,4,Hi,0.744381308555603,False,False,
+unsupported,Can you recommend a movie?,5,Thank you,0.7578133344650269,False,False,
+unsupported,What is the capital of Japan?,1,Thanks for your help,0.8100387454032898,False,False,
+unsupported,What is the capital of Japan?,2,Thank you,0.8126816153526306,False,False,
+unsupported,What is the capital of Japan?,3,Who are you?,0.8249713778495789,False,False,
+unsupported,What is the capital of Japan?,4,Hi,0.8270901441574097,False,False,
+unsupported,What is the capital of Japan?,5,Goodbye,0.8477563261985779,False,False,
+unsupported,Can I get a student discount?,1,What is your loyalty program?,0.7152997255325317,False,False,
+unsupported,Can I get a student discount?,2,What payment methods do you accept?,0.7275166511535645,False,False,
+unsupported,Can I get a student discount?,3,What is your return policy?,0.7410563230514526,False,False,
+unsupported,Can I get a student discount?,4,Thanks for your help,0.7459673285484314,False,False,
+unsupported,Can I get a student discount?,5,What can you help me with?,0.7522311806678772,False,False,

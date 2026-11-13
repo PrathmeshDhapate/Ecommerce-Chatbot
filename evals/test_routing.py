@@ -10,6 +10,7 @@ TEST_CASE = {
 
 
 async def run_test():
+    await initialize_mcp()
     result = await graph.ainvoke(
         {
             "message": TEST_CASE["query"],

@@ -1,0 +1,29 @@
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/chroma_db:/app/chroma_db
+      - ./backend/faq_data:/app/faq_data:ro
+    restart: unless-stopped
+
+  livekit-agent:
+    build: ./backend
+    command: ["python", "voice_agent.py", "start"]
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/chroma_db:/app/chroma_db
+      - ./backend/faq_data:/app/faq_data:ro
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
