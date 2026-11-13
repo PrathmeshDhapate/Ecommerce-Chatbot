@@ -12,6 +12,7 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    ToolMessage
 )
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -119,17 +120,19 @@ def update_entity_context(state: State) -> dict:
     context = dict(state.get("entity_context") or {})
     message = state["message"]
 
+    
     customer_ids = re.findall(
-        r"\b(?:CUST(?:OMER)?-?\d+)\b",
+        r"\b(?:CUST(?:OMER)?[\s-]*\d+)\b",
         message,
         flags=re.IGNORECASE,
     )
 
     order_ids = re.findall(
-        r"\b(?:ORD(?:ER)?-?\d+(?:-[A-Z0-9]+)?)\b",
+        r"\b(?:ORD(?:ER)?[\s-]*\d+[\s-]*[A-Z0-9]+)\b",
         message,
         flags=re.IGNORECASE,
     )
+
 
     # Normalize identifiers using your existing helper.
     if customer_ids:
@@ -528,9 +531,35 @@ Before composing the final response:
 - Preserve identifiers supplied by the user exactly.
 - Do not silently modify identifiers to make them fit a format.
 
-Expected identifier formats include:
-- Order ID: ORD-1005-D
-- Customer ID: CUST-1005
+
+Accepted identifier formats:
+
+Order IDs:
+- ORD-1005-D
+- ORD1005D
+- ORD 1005 D
+- ORDER-1005-D
+
+Customer IDs:
+- CUST-1005
+- CUST1005
+- CUST 1005
+- CUSTOMER-1005
+
+These are alternative representations of identifiers.
+Recognize all these formats as valid identifiers.
+
+When an identifier is supplied:
+- Extract it from the user's message.
+- Check the conversation entity context for previously
+  supplied identifiers.
+- Do not ask for an identifier that is already available
+  in the entity context.
+- Use the correct identifier for the corresponding tool
+  argument.
+- Never confuse an order ID with a customer ID.
+- Normalize identifiers only when required by the tool.
+
 
 For tools that require both an order ID and a customer ID,
 you must have both identifiers explicitly supplied by the user.
@@ -771,7 +800,7 @@ async def rag_node(state: State):
     # ========================================================
 
     identifier_pattern = (
-        r"\b(?:ORD(?:ER)?-?\d+(?:-[A-Z0-9]+)?"
+        r"\b(?:ORD(?:ER)?-?\d+(?:-?[A-Z0-9]+)?"
         r"|CUST(?:OMER)?-?\d+)\b"
     )
 
@@ -804,7 +833,7 @@ async def rag_node(state: State):
     # RESUME A PENDING MCP TASK WHEN AN ID IS PROVIDED
     # ========================================================
 
-    if has_pending_task and supplied_identifier and identifier_only_message:
+    if has_pending_task and supplied_identifier :
 
         combined_mcp_query = (
             f"{pending_query}\n"
@@ -1198,19 +1227,37 @@ async def mcp_agent_node(state: State):
 
     start = time.perf_counter()
 
+    
     # Find the latest MCP AI message and ToolMessage.
-    # We do not send the entire LangGraph conversation history.
     messages = state["messages"]
 
-    latest_tool_index = None
+    # Find the latest AIMessage containing tool calls.
+    latest_ai_index = None
 
     for i in range(len(messages) - 1, -1, -1):
-        if messages[i].__class__.__name__ == "ToolMessage":
-            latest_tool_index = i
+        if (
+            isinstance(messages[i], AIMessage)
+            and messages[i].tool_calls
+        ):
+            latest_ai_index = i
             break
 
-    
-    if latest_tool_index is None:
+    # Check whether a new user message arrived after that tool call.
+    has_new_user_message_after_tool_call = (
+        latest_ai_index is not None
+        and any(
+            isinstance(message, HumanMessage)
+            for message in messages[latest_ai_index + 1:]
+        )
+    )
+
+    # A new user message means we need a fresh MCP cycle.
+    if (
+        latest_ai_index is None
+        or has_new_user_message_after_tool_call
+    ):
+    # First MCP call or a new MCP request.
+
         # First MCP call: send the MCP query and any RAG answer.
         mcp_query = state["mcp_query"] or state["message"]
 
@@ -1246,14 +1293,10 @@ async def mcp_agent_node(state: State):
         ]
 
     else:
-        # MCP follow-up: send only the MCP query,
-        # the AI tool request, and the latest tool result.
-        ai_message = None
+    # MCP follow-up: retrieve the AI tool request
+    # and ALL corresponding ToolMessages.
 
-        for i in range(latest_tool_index - 1, -1, -1):
-            if isinstance(messages[i], AIMessage):
-                ai_message = messages[i]
-                break
+        ai_message = messages[latest_ai_index]
 
         rag_context = "\n".join(
             answer for answer in state.get("rag_answers", [])
@@ -1273,25 +1316,47 @@ async def mcp_agent_node(state: State):
             user_content = (
                 f"RAG ANSWER ALREADY AVAILABLE:\n{rag_context}\n\n"
                 f"Answer only the MCP-specific part of the user's request "
-                f"using the MCP tool result. Do not repeat or restate the "
+                f"using the MCP tool results. Do not repeat or restate the "
                 f"RAG answer, because it will be combined with your response "
                 f"separately.\n\n"
-
                 f"{user_content}"
+            )
+
+        # Collect every ToolMessage belonging to this AIMessage.
+        tool_messages_by_id = {
+            message.tool_call_id: message
+            for message in messages[latest_ai_index + 1:]
+            if isinstance(message, ToolMessage)
+        }
+
+        # Preserve the original tool-call order.
+        matching_tool_messages = [
+            tool_messages_by_id[call["id"]]
+            for call in ai_message.tool_calls
+            if call["id"] in tool_messages_by_id
+        ]
+
+        print("\nTOOL RESULTS COLLECTED:")
+
+        for message in matching_tool_messages:
+            print("Tool:", message.name)
+            print("Tool call ID:", message.tool_call_id)
+            print("Result:", message.content)
+
+        # Detect missing tool results instead of silently ignoring them.
+        if len(matching_tool_messages) != len(ai_message.tool_calls):
+            raise RuntimeError(
+                "Not all requested MCP tool results were found. "
+                f"Expected {len(ai_message.tool_calls)}, "
+                f"received {len(matching_tool_messages)}."
             )
 
         mcp_messages = [
             SystemMessage(content=MCP_SYSTEM_PROMPT),
-            HumanMessage(content=user_content)
-        ]  
-
-        if ai_message is not None:
-            mcp_messages.append(ai_message)
-
-        mcp_messages.append(messages[latest_tool_index])
-
-    print("\n" + "=" * 70)
-    print("MESSAGES SENT TO MCP LLM")
+            HumanMessage(content=user_content),
+            ai_message,
+            *matching_tool_messages,
+        ]
     print("=" * 70)
 
     for message in mcp_messages:
