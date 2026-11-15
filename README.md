@@ -219,9 +219,9 @@ This project demonstrates practical AI engineering concepts:
 ## 👨‍💻 Authors
 
 **Your Name**
-- GitHub: [@your-github](https://github.com/PrathmeshDhapate)
-- LinkedIn: [Your LinkedIn](https://www.linkedin.com/in/prathmesh-dhapate-2455432b4/)
+- GitHub: [Prathmesh Dhapate](https://github.com/PrathmeshDhapate)
+- LinkedIn: [Prathmesh Dhapate](https://www.linkedin.com/in/prathmesh-dhapate-2455432b4/)
 
 **Teammate's Name**
-- GitHub: [@teammate-github](https://github.com/MeetGudhka)
-- LinkedIn: [Teammate's LinkedIn](https://www.linkedin.com/in/meetgudhka02102005/)
+- GitHub: [Meet Gudhka](https://github.com/MeetGudhka)
+- LinkedIn:[Meet Gudhka](https://www.linkedin.com/in/meetgudhka02102005/)
