@@ -160,6 +160,9 @@ MCP commerce tools, and which require a general LLM response.
 USER QUESTION:
 {query}
 
+CONVERSATION ENTITY CONTEXT:
+{entity_context}
+
 RETRIEVED FAQ CANDIDATES:
 {faq_candidates}
 
@@ -303,6 +306,15 @@ YOUR TASK
 16. If the route is GENERAL, `use_rag` must be false, `rag_indices` must be [], `mcp_query` must be "", and `answer` must contain the fixed chatbot-scope message specified in rule 10.
 
 17. Never invent customer IDs, order IDs, or other identifiers.
+
+18.Resolve references such as "it", "this order", and
+"that order" using the conversation entity context.
+
+If the user wants to perform an action on a specific
+order, route to MCP.
+
+Do not route general policy questions to MCP merely
+because an order ID exists in the context.
 
 
 ============================================================
