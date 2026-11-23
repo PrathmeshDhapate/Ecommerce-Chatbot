@@ -65,7 +65,12 @@ def load_faq_documents():
     with FAQ_FILE.open("r", encoding="utf-8") as file:
         data = json.load(file)
 
-    # Support a root list or a dictionary containing a FAQ list.
+    """
+    Basically we convert the json from the faq.json to python objects stored in 
+    variable data in the python memeory.Next if it is a dictionary then we are 
+    extracting the lists from it and storing it in data.If no list was found
+    then we are just giving an error.The items inside the list are dictionaries.
+    """
     if isinstance(data, dict):
         for key in ("faqs", "FAQs", "items", "data"):
             if isinstance(data.get(key), list):

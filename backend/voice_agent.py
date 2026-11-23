@@ -12,10 +12,10 @@ from livekit.plugins import cartesia, silero
 from graph import graph, initialize_mcp
 
 
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("voice-agent")
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env")) # Loading is different from
+                                                             # main.py where theres a diff code
+logging.basicConfig(level=logging.INFO)                      # since it is loading the env into 
+logger = logging.getLogger("voice-agent")                    # livekit agent process
 
 server = AgentServer()
 

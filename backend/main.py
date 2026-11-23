@@ -1,20 +1,11 @@
-import base64
-import io
 import time
-import wave
-import asyncio
 import json
-import re
 import os
 import uuid
 from livekit import api
 
-
 from fastapi.responses import StreamingResponse
 from fastapi import HTTPException
-from contextlib import suppress
-from fastapi import WebSocket, WebSocketDisconnect
-from google.genai import types
 
 from cartesia import AsyncCartesia
 
@@ -22,12 +13,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import (
     FastAPI,
-    File,
-    UploadFile,
-    Form,
 )
 
-from httpx2 import websocket
 from pydantic import BaseModel
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,27 +27,6 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
-
-# ============================================================
-# CARTESIA TTS CONFIGURATION
-# ============================================================
-
-CARTESIA_MODEL_ID = os.getenv("CARTESIA_MODEL_ID", "sonic-3.6")
-
-CARTESIA_VOICE_ID = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
-
-CARTESIA_SAMPLE_RATE = 44100
-
-cartesia_client = AsyncCartesia(
-    api_key=os.getenv("CARTESIA_API_KEY")
-)
-
-# ============================================================
-# GEMINI CLIENT
-# ============================================================
-
-client = genai.Client()
-
 
 # ============================================================
 # FASTAPI LIFESPAN
@@ -129,6 +95,16 @@ def home():
         "message": "Backend is running"
     }
 
+"""
+For livekit we basically we have a livekit project which basically is our server URL.
+The LiveKit API key is basically used to identify which project/account is issuing
+the token.The LiveKit Secret is used to authenticate the participant.In this function we
+basically create random ids for both our room name and participant_identity which
+will be passed to livekit.The access token i.e JWT that will be created with these details needs
+the API secret and it contains the participant id and room name.Once the backend sends the
+frontend all the necessary details then React joins the room.
+"""
+
 @app.post("/livekit/token")
 async def create_livekit_token():
     livekit_url = os.getenv("LIVEKIT_URL")
@@ -146,8 +122,8 @@ async def create_livekit_token():
 
     token = (
         api.AccessToken(api_key, api_secret)
-        .with_identity(participant_identity)
-        .with_name("Voice User")
+        .with_identity(participant_identity) #puts the identity of the user in the
+        .with_name("Voice User")             #secret key
         .with_grants(
             api.VideoGrants(
                 room_join=True,
@@ -268,8 +244,8 @@ async def chat_stream(request: ChatRequest):
                     {"text": final_response}
                 )
 
-            print("\nDEBUG FINAL RESPONSE:", repr(final_response))
-            print("DEBUG STREAMED TEXT:", repr(streamed_text))
+            print("\nDEBUG FINAL RESPONSE:", repr(final_response))  #repr helps get the answer in a better way like
+            print("DEBUG STREAMED TEXT:", repr(streamed_text))      #'' for empty instead of just blank with a print statement
             print("DEBUG DONE ANSWER:", repr(final_response or streamed_text))
             
 

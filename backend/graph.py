@@ -122,13 +122,13 @@ def update_entity_context(state: State) -> dict:
 
     
     customer_ids = re.findall(
-        r"\b(?:CUST(?:OMER)?[\s-]*\d+)\b",
+        r"\b(CUST(?:OMER)?-?\d+)\b",
         message,
         flags=re.IGNORECASE,
     )
 
     order_ids = re.findall(
-        r"\b(?:ORD(?:ER)?[\s-]*\d+[\s-]*[A-Z0-9]+)\b",
+        r"\b(ORD(?:ER)?-?\d+(?:-[A-Z0-9]+)?)\b",
         message,
         flags=re.IGNORECASE,
     )
