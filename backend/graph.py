@@ -1027,7 +1027,7 @@ async def rag_node(state: State):
         rag_indices = []
         rag_answer = ""
 
-    # Invalid field types should not accidentally trigger MCP.
+    # Invalid field types checking
     if (
         not isinstance(rag_indices, list)
         or not isinstance(mcp_query, str)
@@ -1564,11 +1564,6 @@ async def mcp_tool_node(state: State):
 # ============================================================
 # MCP FINAL RESPONSE NODE
 # ============================================================
-
-
-
-
-
 
 async def mcp_response_node(state: State):
     if not state["messages"]:
